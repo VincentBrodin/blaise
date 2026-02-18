@@ -22,6 +22,7 @@ pub async fn routing(
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, StatusCode> {
     if let Some(repository) = &*state.repository.read().await
+        && let Some(realtime) = &*state.realtime.read().await
         && let Some(pool) = &*state.allocator_pool.read().await
     {
         let from = if let Some(from) = params.get("from") {
@@ -67,6 +68,7 @@ pub async fn routing(
             "Looking for a route from {:?} to {:?} | time constraint: {:?} | allowing walks: {} | sending shapes: {}",
             from, to, time_constrait, allow_walks, include_shapes
         );
+
         let raptor = Raptor::new(repository, from, to)
             .with_time_constraint(time_constrait)
             .allow_walks(allow_walks);
@@ -80,12 +82,22 @@ pub async fn routing(
             {
                 let from = repository.stop_by_id(from_stop).unwrap();
                 let to = repository.stop_by_id(to_stop).unwrap();
+                let mut delay = String::from("no delay");
+                if let LegType::Transit(trip_idx) = leg.leg_type
+                    && let Some(update_idx) = realtime.trip_updates[trip_idx as usize]
+                {
+                    let update = &realtime.updates[update_idx as usize];
+                    if let Some(trip_update) = &update.trip_update {
+                        delay = format!("{} delay", trip_update.delay())
+                    }
+                }
                 debug!(
-                    "{leg_type} {} -> {} @ {} -> {}",
+                    "{leg_type} {} -> {} @ {} -> {} | {}",
                     from.name,
                     to.name,
                     leg.departue_time.to_hms_string(),
-                    leg.arrival_time.to_hms_string()
+                    leg.arrival_time.to_hms_string(),
+                    delay
                 );
                 leg.stops.iter().for_each(|leg_stop| {
                     if let Location::Stop(stop_id) = &leg_stop.location {

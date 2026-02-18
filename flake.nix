@@ -28,6 +28,7 @@
             pkgs.taplo
             pkgs.nodePackages.vscode-json-languageserver
             pkgs.dockerfile-language-server
+            pkgs.protobuf
           ];
 
           # Libraries your project links to go here
