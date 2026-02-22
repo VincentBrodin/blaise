@@ -1,21 +1,37 @@
-use gtfs_rt::{FeedEntity, FeedMessage};
-use prost::Message;
-use tracing::debug;
+use std::fmt::Debug;
 
-use crate::repository::Repository;
+use gtfs_rt::{FeedEntity, FeedMessage, trip_update::StopTimeEvent};
+use prost::Message;
+use tracing::warn;
+
+use crate::{repository::Repository, shared::Duration};
 
 #[derive(Debug, Clone, Default)]
 pub struct Realtime {
     pub trip_updates: Vec<Option<u32>>,
-    pub stop_updates: Vec<Option<u32>>,
     pub updates: Vec<FeedEntity>,
+    pub stop_time_updates: Vec<StopTimeUpdate>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StopTimeUpdate {
+    arrival_delay: Delay,
+    departure_delay: Delay,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Delay {
+    #[default]
+    OnTime,
+    Ahead(Duration),
+    Behind(Duration),
 }
 
 impl Realtime {
     pub fn new(repository: &Repository) -> Self {
         Self {
             trip_updates: vec![None; repository.trips.len()],
-            stop_updates: vec![None; repository.stops.len()],
+            stop_time_updates: vec![Default::default(); repository.stop_times.len()],
             updates: Vec::with_capacity(1024),
         }
     }
@@ -27,8 +43,9 @@ impl Realtime {
     ) -> Result<Self, prost::DecodeError> {
         let message = FeedMessage::decode(bytes)?;
         println!("Found {} updates", message.entity.len());
+
         self.trip_updates.fill(None);
-        self.stop_updates.fill(None);
+        self.stop_time_updates.fill(Default::default());
         self.updates.clear();
         message
             .entity
@@ -39,14 +56,47 @@ impl Realtime {
                     && let Some(trip) = repository.trip_by_id(trip_update.trip.trip_id())
                 {
                     self.trip_updates[trip.index as usize] = Some(i as u32);
+                    let stop_times = repository.stop_times_by_trip_idx(trip.index);
+                    trip_update.stop_time_update.iter().for_each(|stu| {
+                        if let Some(seq) = stu.stop_sequence
+                            && seq != 0
+                            && (seq as usize) <= stop_times.len()
+                        {
+                            let st = &stop_times[seq as usize - 1];
+                            let arrival_delay = stop_time_event_to_delay(stu.arrival.as_ref());
+                            let departure_delay = stop_time_event_to_delay(stu.departure.as_ref());
+                            let update = StopTimeUpdate {
+                                arrival_delay,
+                                departure_delay,
+                            };
+                            self.stop_time_updates[st.index as usize] = update;
+                        } else {
+                            warn!(
+                                "Found invalid stop time update in {}",
+                                trip_update.trip.trip_id()
+                            )
+                        }
+                    });
                 }
-                if let Some(entity_stop) = &entity.stop
-                    && let Some(stop) = repository.stop_by_id(entity_stop.stop_id())
-                {
-                    self.stop_updates[stop.index as usize] = Some(i as u32);
-                }
+
                 self.updates.push(entity);
             });
         Ok(self)
+    }
+}
+
+fn stop_time_event_to_delay(stop_time_event: Option<&StopTimeEvent>) -> Delay {
+    if let Some(stu) = stop_time_event {
+        let delay = stu.delay();
+
+        if delay == 0 {
+            Delay::OnTime
+        } else if delay > 0 {
+            Delay::Behind(Duration::from_seconds(delay.unsigned_abs()))
+        } else {
+            Delay::Ahead(Duration::from_seconds(delay.unsigned_abs()))
+        }
+    } else {
+        Delay::OnTime
     }
 }
