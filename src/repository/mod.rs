@@ -1,5 +1,6 @@
 use crate::{
     raptor::{Location, Raptor},
+    realtime::Realtime,
     shared::{
         self,
         geo::{AVERAGE_STOP_DISTANCE, Coordinate, Distance},
@@ -86,13 +87,6 @@ impl Repository {
     /// Creates a new, empty repository instance.
     pub fn new() -> Self {
         Default::default()
-    }
-
-    /// Initializes a new RAPTOR router instance tied to the lifetime of this repository.
-    ///
-    /// This is the entry point for performing pathfinding between two locations.
-    pub fn router(&'_ self, from: Location, to: Location) -> Raptor<'_> {
-        Raptor::new(self, from, to)
     }
 
     // --- Primary Key Lookups Functions ---

@@ -15,7 +15,7 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub async fn routing(
     Query(params): Query<HashMap<String, String>>,
@@ -72,9 +72,9 @@ pub async fn routing(
         from, to, time_constrait, allow_walks, include_shapes
     );
 
-    let raptor = Raptor::new(repository, from, to)
+    let raptor = Raptor::new(repository, realtime, from, to)
         .with_time_constraint(time_constrait)
-        .allow_walks(allow_walks);
+        .with_allow_walks(allow_walks);
     let itinerary = raptor
         .solve_with_allocator(allocator)
         .expect("Failed to unwrap allocator");

@@ -3,6 +3,7 @@ use crate::{
         Allocator, LazyBuffer, Parent, Update, find_earliest_trip, find_latest_trip,
         get_arrival_time, get_departure_time, time_to_walk, transfer_duration,
     },
+    realtime::Realtime,
     repository::{Repository, Trip},
     shared::time,
 };
@@ -11,7 +12,7 @@ use rayon::prelude::*;
 /// Explores all active routes and add any updates to the update buffer in the allocator.
 /// This is the core of the k-th round: it propagates travel times by one additional "hop"
 /// using only transit routes.
-pub fn explore_routes(repository: &Repository, allocator: &mut Allocator) {
+pub fn explore_routes(repository: &Repository, realtime: &Realtime, allocator: &mut Allocator) {
     let updates = allocator
         .active_mask
         .iter_ones()
@@ -78,7 +79,11 @@ pub fn explore_routes(repository: &Repository, allocator: &mut Allocator) {
 }
 
 /// Reverse exploration for Latest Departure Time (LDT) queries.
-pub fn explore_routes_reverse(repository: &Repository, allocator: &mut Allocator) {
+pub fn explore_routes_reverse(
+    repository: &Repository,
+    realtime: &Realtime,
+    allocator: &mut Allocator,
+) {
     let updates = allocator
         .active_mask
         .iter_ones()
@@ -146,7 +151,12 @@ pub fn explore_routes_reverse(repository: &Repository, allocator: &mut Allocator
 /// Handles footpaths and transfers between stops.
 /// In RAPTOR, transfers are processed after route exploration to ensure that
 /// round k transit results can be used as the starting point for round k+1.
-pub fn explore_transfers(allow_walk: bool, repository: &Repository, allocator: &mut Allocator) {
+pub fn explore_transfers(
+    allow_walk: bool,
+    repository: &Repository,
+    realtime: &Realtime,
+    allocator: &mut Allocator,
+) {
     let updates = allocator
         .marked_stops
         .iter_ones()
@@ -217,6 +227,7 @@ pub fn explore_transfers(allow_walk: bool, repository: &Repository, allocator: &
 pub fn explore_transfers_reverse(
     allow_walk: bool,
     repository: &Repository,
+    realtime: &Realtime,
     allocator: &mut Allocator,
 ) {
     let updates = allocator
