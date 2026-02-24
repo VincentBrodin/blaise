@@ -18,3 +18,4 @@ blaise.workspace = true
 reqwest = { version = "0.13.1", features = ["stream", "gzip"] }
 futures-util = "0.3.31"
 crossbeam-queue = "0.3.12"
+dotenv = "0.15.0"

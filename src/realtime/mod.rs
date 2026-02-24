@@ -36,17 +36,13 @@ impl Realtime {
         }
     }
 
-    pub fn load(
-        mut self,
+    fn load_inner(
+        &mut self,
         bytes: &[u8],
         repository: &Repository,
-    ) -> Result<Self, prost::DecodeError> {
+    ) -> Result<(), prost::DecodeError> {
         let message = FeedMessage::decode(bytes)?;
         println!("Found {} updates", message.entity.len());
-
-        self.trip_updates.fill(None);
-        self.stop_time_updates.fill(Default::default());
-        self.updates.clear();
         message
             .entity
             .into_iter()
@@ -81,6 +77,32 @@ impl Realtime {
 
                 self.updates.push(entity);
             });
+        Ok(())
+    }
+
+    pub fn load(
+        mut self,
+        bytes: &[u8],
+        repository: &Repository,
+    ) -> Result<Self, prost::DecodeError> {
+        self.trip_updates.fill(None);
+        self.stop_time_updates.fill(Default::default());
+        self.updates.clear();
+        self.load_inner(bytes, repository)?;
+        Ok(self)
+    }
+
+    pub fn load_many(
+        mut self,
+        all_bytes: &[&[u8]],
+        repository: &Repository,
+    ) -> Result<Self, prost::DecodeError> {
+        self.trip_updates.fill(None);
+        self.stop_time_updates.fill(Default::default());
+        self.updates.clear();
+        all_bytes
+            .iter()
+            .try_for_each(|bytes| self.load_inner(bytes, repository))?;
         Ok(self)
     }
 }

@@ -1,12 +1,14 @@
 use crate::state::{AllocatorPool, AppState};
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use blaise::{gtfs::GtfsReader, repository::Repository};
-use futures_util::StreamExt;
-use reqwest::header::ACCEPT_ENCODING;
+use blaise::{gtfs::GtfsReader, realtime::Realtime, repository::Repository};
+use futures_util::{StreamExt, future::try_join_all};
+use reqwest::{Url, header::ACCEPT_ENCODING};
+use serde::Deserialize;
 use std::{collections::HashMap, fs, path::Path, sync::Arc, time::Instant};
 use tokio::{fs::File, io::AsyncWriteExt};
 use tracing::{error, info};
@@ -40,15 +42,26 @@ fn seconds_since_modified<P: AsRef<Path>>(path: P) -> Result<u64, StatusCode> {
     Ok(duration.as_secs())
 }
 
-pub async fn fetch_url(
-    Query(params): Query<HashMap<String, String>>,
+#[derive(Deserialize)]
+pub struct DownloadGtfsPayload {
+    gtfs_url: String,
+}
+
+#[derive(Deserialize)]
+pub struct DownloadGtfsRtPayload {
+    gtfs_rt_urls: Vec<String>,
+}
+
+pub async fn download_gtfs(
     State(state): State<Arc<AppState>>,
+    Json(payload): Json<DownloadGtfsPayload>,
 ) -> Result<Response, StatusCode> {
-    if let Some(q) = params.get("q") {
+    {
+        let gtfs_url = Url::parse(&payload.gtfs_url).map_err(|_| StatusCode::BAD_REQUEST)?;
         info!("Downloading GTFS data...");
         let mut now = Instant::now();
         let response = reqwest::Client::new()
-            .get(q)
+            .get(gtfs_url)
             .header(ACCEPT_ENCODING, "gzip, deflate")
             .send()
             .await
@@ -115,7 +128,50 @@ pub async fn fetch_url(
         let _ = state.allocator_pool.write().await.replace(pool);
         let _ = state.repository.write().await.replace(repo);
         Ok(().into_response())
-    } else {
-        Err(StatusCode::BAD_REQUEST)
+    }
+}
+
+pub async fn download_gtfs_rt(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DownloadGtfsRtPayload>,
+) -> Result<Response, StatusCode> {
+    {
+        let gaurd = state.repository.read().await;
+        let repository = gaurd.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let gtfs_rt_urls = payload
+            .gtfs_rt_urls
+            .into_iter()
+            .map(|url_str| Url::parse(&url_str).map_err(|_| StatusCode::BAD_REQUEST))
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = gtfs_rt_urls.len();
+        let all_bytes = try_join_all(gtfs_rt_urls.into_iter().enumerate().map(async |(i, url)| {
+            let i = i + 1;
+            info!("Downloading GTFS RT data... ({i}/{count})");
+            let now = Instant::now();
+            let response = reqwest::Client::new()
+                .get(url)
+                .send()
+                .await
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                error!("Response is not success: {body}");
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            let bytes = response.bytes().await.map_err(|_| StatusCode::BAD_REQUEST);
+            info!(
+                "Downloading GTFS RT data took {:?} ({i}/{count})",
+                now.elapsed()
+            );
+            bytes
+        }))
+        .await?;
+        let slices: Vec<_> = all_bytes.iter().map(|bytes| bytes.as_ref()).collect();
+        let rt = Realtime::new(repository)
+            .load_many(&slices, repository)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let _ = state.realtime.write().await.replace(rt);
+        Ok(().into_response())
     }
 }

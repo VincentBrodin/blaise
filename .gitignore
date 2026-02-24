@@ -3,3 +3,4 @@
 *.pb
 crates/server/sweden
 .direnv/
+.env

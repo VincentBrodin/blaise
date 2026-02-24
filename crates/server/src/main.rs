@@ -3,7 +3,7 @@ mod dto;
 mod state;
 
 use crate::state::{AllocatorPool, AppState};
-use axum::routing::get;
+use axum::routing::{get, post};
 use blaise::{gtfs::GtfsReader, realtime::Realtime, repository::Repository};
 use std::{env, fs::File, io::Read, path::Path, str::FromStr, sync::Arc, time::Instant};
 use tokio::{net::TcpListener, sync::RwLock};
@@ -15,6 +15,10 @@ const DEFAULT_LOG_LEVEL: Level = Level::INFO;
 
 #[tokio::main]
 async fn main() {
+    if let Some(err) = dotenv::dotenv().err() {
+        println!("Failed to load .env file: {}", err)
+    }
+
     let log_level = match env::var("LOG_LEVEL") {
         Ok(level_str) => Level::from_str(&level_str).unwrap_or(DEFAULT_LOG_LEVEL),
         Err(_) => DEFAULT_LOG_LEVEL,
@@ -34,9 +38,9 @@ async fn main() {
         .map(|path_str| Path::new(&path_str).to_owned())
         .expect("Missing GTFS_DATA_PATH");
 
-    let rt_data_path = env::var("RT_DATA_PATH")
+    let gtfs_rt_data_path = env::var("GTFS_RT_DATA_PATH")
         .map(|path_str| Path::new(&path_str).to_owned())
-        .expect("Missing RT_DATA_PATH");
+        .expect("Missing GTFS_RT_DATA_PATH");
 
     let alloc_count = env::var("ALLOCATOR_COUNT")
         .map(|value| {
@@ -57,6 +61,7 @@ async fn main() {
         allocator_pool: RwLock::new(None),
         allocator_count: alloc_count,
         gtfs_data_path,
+        gtfs_rt_data_path,
     };
 
     if app_state.gtfs_data_path.exists() {
@@ -74,7 +79,7 @@ async fn main() {
         info!("Loading GTFS data took {:?}", now.elapsed());
         info!("Loading RT data...");
         now = Instant::now();
-        let mut rt_file = File::open(rt_data_path).expect("Failed to open rt file");
+        let mut rt_file = File::open(&app_state.gtfs_rt_data_path).expect("Failed to open rt file");
         let mut buf: Vec<u8> = Vec::with_capacity(1024);
         rt_file
             .read_to_end(&mut buf)
@@ -101,8 +106,9 @@ async fn main() {
         .route("/near/area", get(api::near_areas))
         .route("/near/stop", get(api::near_stops))
         .route("/routing", get(api::routing))
-        .route("/gtfs/fetch-url", get(api::fetch_url))
+        .route("/gtfs/download", post(api::download_gtfs))
         .route("/gtfs/age", get(api::age))
+        .route("/gtfsrt/download", post(api::download_gtfs_rt))
         .with_state(Arc::new(app_state));
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .await
