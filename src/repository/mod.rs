@@ -1,10 +1,6 @@
-use crate::{
-    raptor::{Location, Raptor},
-    realtime::Realtime,
-    shared::{
-        self,
-        geo::{AVERAGE_STOP_DISTANCE, Coordinate, Distance},
-    },
+use crate::shared::{
+    self,
+    geo::{AVERAGE_STOP_DISTANCE, Coordinate, Distance},
 };
 use std::{collections::HashMap, sync::Arc};
 

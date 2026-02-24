@@ -268,19 +268,14 @@ impl<'a> Raptor<'a> {
                     explore_routes_reverse(self.repository, self.realtime, allocator);
                     allocator.run_updates_reverse();
 
-                    explore_transfers_reverse(
-                        self.allow_walks,
-                        self.repository,
-                        self.realtime,
-                        allocator,
-                    );
+                    explore_transfers_reverse(self.allow_walks, self.repository, allocator);
                     allocator.run_updates_reverse();
                 }
                 TimeConstraint::Departure(_) => {
                     explore_routes(self.repository, self.realtime, allocator);
                     allocator.run_updates();
 
-                    explore_transfers(self.allow_walks, self.repository, self.realtime, allocator);
+                    explore_transfers(self.allow_walks, self.repository, allocator);
                     allocator.run_updates();
                 }
             }
@@ -317,7 +312,13 @@ impl<'a> Raptor<'a> {
                 target_round,
                 self.time_constraint,
             )?;
-            Ok(Itinerary::new(self.from, self.to, path, self.repository))
+            Ok(Itinerary::new(
+                self.from,
+                self.to,
+                path,
+                self.repository,
+                self.realtime,
+            ))
         } else {
             Err(self::Error::NoRouteFound)
         }

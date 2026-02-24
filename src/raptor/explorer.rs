@@ -35,19 +35,25 @@ pub fn explore_routes(repository: &Repository, realtime: &Realtime, allocator: &
                     // If we are currently "on" a trip, check if it reaches this stop
                     // earlier than any path discovered in previous rounds.
                     if let Some(trip) = active_trip
-                        && let arrival_time = get_arrival_time(repository, trip.index, i)
-                        && arrival_time < allocator.tau_star[stop_idx as usize].unwrap_or(time::MAX)
-                        && arrival_time < allocator.target.tau_star
+                        && let (scheduled_arrival_time, actual_arrival_time) =
+                            get_arrival_time(repository, realtime, trip.index, i)
+                        && actual_arrival_time
+                            < allocator.tau_star[stop_idx as usize].unwrap_or(time::MAX)
+                        && actual_arrival_time < allocator.target.tau_star
                     {
+                        let (scheduled_departure_time, actual_departure_time) =
+                            get_departure_time(repository, realtime, trip.index, boarding_p);
                         buffer.push(Update::new(
                             stop_idx,
-                            arrival_time,
+                            actual_arrival_time,
                             Parent::new_transit(
                                 boarding_stop.into(),
                                 stop_idx.into(),
                                 trip.index,
-                                get_departure_time(repository, trip.index, boarding_p),
-                                arrival_time,
+                                scheduled_departure_time,
+                                actual_departure_time,
+                                scheduled_arrival_time,
+                                actual_arrival_time,
                             ),
                         ));
                     }
@@ -57,13 +63,13 @@ pub fn explore_routes(repository: &Repository, realtime: &Realtime, allocator: &
                     // arrival time at this stop from the PREVIOUS round is earlier
                     // than the departure of a trip on the current route.
                     let prev_label = allocator.prev_labels[stop_idx as usize].unwrap_or(time::MAX);
-                    let current_trip_dep = active_trip
-                        .map(|t| get_departure_time(repository, t.index, i))
-                        .unwrap_or(time::MAX);
+                    let (_, current_trip_dep) = active_trip
+                        .map(|t| get_departure_time(repository, realtime, t.index, i))
+                        .unwrap_or((time::MAX, time::MAX));
 
                     if prev_label <= current_trip_dep
                         && let Some(earlier_trip) =
-                            find_earliest_trip(repository, route, i, prev_label)
+                            find_earliest_trip(repository, realtime, route, i, prev_label)
                     {
                         // We found a better trip to board (or a fresh start for this route).
                         active_trip = Some(earlier_trip);
@@ -106,18 +112,25 @@ pub fn explore_routes_reverse(
                     // PART A: If we have an active trip, can we leave this stop LATER
                     // than previously known and still catch it?
                     if let Some(trip) = active_trip {
-                        let dep_time = get_departure_time(repository, trip.index, i as usize);
+                        let (scheduled_departure_time, actual_departure_time) =
+                            get_departure_time(repository, realtime, trip.index, i as usize);
 
-                        if dep_time > allocator.tau_star[stop_idx as usize].unwrap_or(time::MIN) {
+                        if actual_departure_time
+                            > allocator.tau_star[stop_idx as usize].unwrap_or(time::MIN)
+                        {
+                            let (scheduled_arrival_time, actual_arrival_time) =
+                                get_arrival_time(repository, realtime, trip.index, alighting_p);
                             buffer.push(Update::new(
                                 stop_idx,
-                                dep_time,
+                                actual_departure_time,
                                 Parent::new_transit(
                                     (stop_idx).into(),
                                     alighting_stop.into(),
                                     trip.index,
-                                    dep_time,
-                                    get_arrival_time(repository, trip.index, alighting_p),
+                                    scheduled_departure_time,
+                                    actual_departure_time,
+                                    scheduled_arrival_time,
+                                    actual_arrival_time,
                                 ),
                             ));
                         }
@@ -126,15 +139,15 @@ pub fn explore_routes_reverse(
                     // PART B: Look for a trip that arrives at this stop LATER than
                     // our previous round's departure label, allowing us to shift our whole schedule later.
                     let prev_label = allocator.prev_labels[stop_idx as usize].unwrap_or(time::MIN);
-                    let trip_arrival = active_trip
-                        .map(|t| get_arrival_time(repository, t.index, i as usize))
-                        .unwrap_or(time::MIN);
+                    let (_, trip_arrival) = active_trip
+                        .map(|t| get_arrival_time(repository, realtime, t.index, i as usize))
+                        .unwrap_or((time::MIN, time::MIN));
 
                     // If this stop has a departure label LATER than our current trip's arrival,
                     // find a trip that arrives even later (but still before the label)
                     if prev_label >= trip_arrival
                         && let Some(later_trip) =
-                            find_latest_trip(repository, route, i as usize, prev_label)
+                            find_latest_trip(repository, realtime, route, i as usize, prev_label)
                     {
                         active_trip = Some(later_trip);
                         alighting_stop = stop_idx;
@@ -151,12 +164,7 @@ pub fn explore_routes_reverse(
 /// Handles footpaths and transfers between stops.
 /// In RAPTOR, transfers are processed after route exploration to ensure that
 /// round k transit results can be used as the starting point for round k+1.
-pub fn explore_transfers(
-    allow_walk: bool,
-    repository: &Repository,
-    realtime: &Realtime,
-    allocator: &mut Allocator,
-) {
+pub fn explore_transfers(allow_walk: bool, repository: &Repository, allocator: &mut Allocator) {
     let updates = allocator
         .marked_stops
         .iter_ones()
@@ -227,7 +235,6 @@ pub fn explore_transfers(
 pub fn explore_transfers_reverse(
     allow_walk: bool,
     repository: &Repository,
-    realtime: &Realtime,
     allocator: &mut Allocator,
 ) {
     let updates = allocator

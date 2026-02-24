@@ -8,6 +8,14 @@ use std::{
 pub const MIN: Time = Time(0);
 pub const MAX: Time = Time(u32::MAX);
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Delay {
+    #[default]
+    OnTime,
+    Ahead(Duration),
+    Behind(Duration),
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Time(u32);
 
@@ -65,6 +73,14 @@ impl Time {
     pub fn now() -> Self {
         let now = Local::now();
         Self(now.num_seconds_from_midnight())
+    }
+
+    pub fn with_delay(self, delay: Delay) -> Self {
+        match delay {
+            Delay::OnTime => self,
+            Delay::Ahead(duration) => self - duration,
+            Delay::Behind(duration) => self + duration,
+        }
     }
 
     pub const fn from_seconds(secs: u32) -> Self {

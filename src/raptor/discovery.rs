@@ -1,5 +1,6 @@
 use crate::{
     raptor::{self, Allocator, Location},
+    realtime::Realtime,
     repository::{RaptorRoute, Repository, Stop, Transfer, Trip},
     shared::{AVERAGE_STOP_DISTANCE, Distance, Duration, Time},
 };
@@ -85,26 +86,44 @@ pub fn index_in_route(route: &RaptorRoute, stop_idx: u32) -> Option<u32> {
     None
 }
 
-pub fn get_arrival_time(repository: &Repository, trip_idx: u32, p_idx: usize) -> Time {
+pub fn get_arrival_time(
+    repository: &Repository,
+    realtime: &Realtime,
+    trip_idx: u32,
+    p_idx: usize,
+) -> (Time, Time) {
     let stop_times = repository.stop_times_by_trip_idx(trip_idx);
-    stop_times[p_idx].arrival_time
+    let stop_time = &stop_times[p_idx];
+    let delay = &realtime.stop_time_updates[stop_time.index as usize];
+    let arr = stop_times[p_idx].departure_time;
+    (arr, arr.with_delay(delay.arrival_delay))
 }
 
-pub fn get_departure_time(repository: &Repository, trip_idx: u32, p_idx: usize) -> Time {
+pub fn get_departure_time(
+    repository: &Repository,
+    realtime: &Realtime,
+    trip_idx: u32,
+    p_idx: usize,
+) -> (Time, Time) {
     let stop_times = repository.stop_times_by_trip_idx(trip_idx);
-    stop_times[p_idx].departure_time
+    let stop_time = &stop_times[p_idx];
+    let delay = &realtime.stop_time_updates[stop_time.index as usize];
+    let dep = stop_times[p_idx].departure_time;
+    (dep, dep.with_delay(delay.departure_delay))
 }
 
 /// Finds the latest trip that we can take from current stop based on the time
 pub fn find_latest_trip<'a>(
     repository: &'a Repository,
+    realtime: &Realtime,
     route: &'a RaptorRoute,
     p_idx: usize,
     max_arrival: Time,
 ) -> Option<&'a Trip> {
-    let idx = route
-        .trips
-        .partition_point(|&trip_idx| get_arrival_time(repository, trip_idx, p_idx) <= max_arrival);
+    let idx = route.trips.partition_point(|&trip_idx| {
+        let (_, arrival_time) = get_arrival_time(repository, realtime, trip_idx, p_idx);
+        arrival_time <= max_arrival
+    });
 
     if idx == 0 {
         None
@@ -119,13 +138,15 @@ pub fn find_latest_trip<'a>(
 /// Finds the earliest trip that we can take from current stop based on the time
 pub fn find_earliest_trip<'a>(
     repository: &'a Repository,
+    realtime: &Realtime,
     route: &'a RaptorRoute,
     p_idx: usize,
     min_departure: Time,
 ) -> Option<&'a Trip> {
-    let idx = route
-        .trips
-        .partition_point(|&trip_idx| get_arrival_time(repository, trip_idx, p_idx) < min_departure);
+    let idx = route.trips.partition_point(|&trip_idx| {
+        let (_, arrival_time) = get_arrival_time(repository, realtime, trip_idx, p_idx);
+        arrival_time < min_departure
+    });
     route
         .trips
         .get(idx)

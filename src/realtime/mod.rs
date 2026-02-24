@@ -4,7 +4,10 @@ use gtfs_rt::{FeedEntity, FeedMessage, trip_update::StopTimeEvent};
 use prost::Message;
 use tracing::warn;
 
-use crate::{repository::Repository, shared::Duration};
+use crate::{
+    repository::Repository,
+    shared::{Delay, Duration},
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Realtime {
@@ -15,16 +18,8 @@ pub struct Realtime {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StopTimeUpdate {
-    arrival_delay: Delay,
-    departure_delay: Delay,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub enum Delay {
-    #[default]
-    OnTime,
-    Ahead(Duration),
-    Behind(Duration),
+    pub arrival_delay: Delay,
+    pub departure_delay: Delay,
 }
 
 impl Realtime {

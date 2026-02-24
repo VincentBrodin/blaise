@@ -4,6 +4,7 @@ use crate::{
         GtfsTransfer, GtfsTrip,
     },
     raptor::get_departure_time,
+    realtime::Realtime,
     repository::{
         Area, Cell, RaptorRoute, Repository, Route, Shape, Slice, Stop, StopTime, Transfer, Trip,
     },
@@ -400,6 +401,7 @@ impl Repository {
         // with the split trips we can create the raptor route.
         debug!("Generating raptor routes...");
         let now = Instant::now();
+        let realtime = Realtime::new(self);
         let mut raptor_routes: Vec<RaptorRoute> = Vec::new();
         let mut route_to_raptors: Vec<Vec<u32>> = vec![Vec::new(); self.routes.len()];
         let mut stop_to_raptors: Vec<Vec<u32>> = vec![Vec::new(); self.stops.len()];
@@ -420,7 +422,7 @@ impl Repository {
                 });
                 route_to_raptors[route.index as usize].push(index as u32);
 
-                value.par_sort_by_key(|trip_idx| get_departure_time(self, *trip_idx, 0));
+                value.par_sort_by_key(|trip_idx| get_departure_time(self, &realtime, *trip_idx, 0));
 
                 // Add slice
                 if let Some(trip_idx) = value.first().copied() {

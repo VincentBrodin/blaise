@@ -85,31 +85,25 @@ pub async fn routing(
         {
             let from = repository.stop_by_id(from_stop).unwrap();
             let to = repository.stop_by_id(to_stop).unwrap();
-            let mut delay = String::from("no delay");
-            if let LegType::Transit(trip_idx) = leg.leg_type
-                && let Some(update_idx) = realtime.trip_updates[trip_idx as usize]
-            {
-                let update = &realtime.updates[update_idx as usize];
-                if let Some(trip_update) = &update.trip_update {
-                    delay = format!("{} delay", trip_update.delay())
-                }
-            }
             debug!(
-                "{leg_type} {} -> {} @ {} -> {} | {}",
+                "{leg_type} {} -> {} @ {}/{} -> {}/{}",
                 from.name,
                 to.name,
-                leg.departue_time.to_hms_string(),
-                leg.arrival_time.to_hms_string(),
-                delay
+                leg.scheduled_departure_time.to_hms_string(),
+                leg.actual_departure_time.to_hms_string(),
+                leg.scheduled_departure_time.to_hms_string(),
+                leg.actual_departure_time.to_hms_string(),
             );
             leg.stops.iter().for_each(|leg_stop| {
                 if let Location::Stop(stop_id) = &leg_stop.location {
                     let stop = repository.stop_by_id(stop_id).unwrap();
                     debug!(
-                        "| {} @ {} -> {}",
+                        "| {} @ {}/{} -> {}/{}",
                         stop.name,
-                        leg_stop.arrival_time.to_hms_string(),
-                        leg_stop.departure_time.to_hms_string(),
+                        leg.scheduled_departure_time.to_hms_string(),
+                        leg.actual_departure_time.to_hms_string(),
+                        leg.scheduled_departure_time.to_hms_string(),
+                        leg.actual_departure_time.to_hms_string(),
                     );
                 }
             });
@@ -121,8 +115,8 @@ pub async fn routing(
                 "{leg_type} {} -> {} @ {} -> {}",
                 from_coord,
                 to.name,
-                leg.departue_time.to_hms_string(),
-                leg.arrival_time.to_hms_string(),
+                leg.actual_departure_time.to_hms_string(),
+                leg.actual_arrival_time.to_hms_string(),
             );
         } else if let Location::Stop(from_stop) = &leg.from
             && let Location::Coordinate(to_coord) = &leg.to
@@ -132,8 +126,8 @@ pub async fn routing(
                 "{leg_type} {} -> {} @ {} -> {}",
                 from.name,
                 to_coord,
-                leg.departue_time.to_hms_string(),
-                leg.arrival_time.to_hms_string()
+                leg.actual_departure_time.to_hms_string(),
+                leg.actual_arrival_time.to_hms_string()
             );
         }
     });
