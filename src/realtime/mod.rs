@@ -50,10 +50,9 @@ impl Realtime {
                     let stop_times = repository.stop_times_by_trip_idx(trip.index);
                     trip_update.stop_time_update.iter().for_each(|stu| {
                         if let Some(seq) = stu.stop_sequence
-                            && seq != 0
-                            && (seq as usize) <= stop_times.len()
+                            && let Ok(idx) = stop_times.binary_search_by_key(&seq, |st| st.sequence)
                         {
-                            let st = &stop_times[seq as usize - 1];
+                            let st = &stop_times[idx];
                             let arrival_delay = stop_time_event_to_delay(stu.arrival.as_ref());
                             let departure_delay = stop_time_event_to_delay(stu.departure.as_ref());
                             let update = StopTimeUpdate {
