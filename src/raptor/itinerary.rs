@@ -3,6 +3,7 @@ use crate::{
         Parent, ParentType,
         location::{Location, Point},
     },
+    realtime::Realtime,
     repository::Repository,
     shared::{Distance, time::Time},
 };
@@ -12,8 +13,10 @@ use serde::Serialize;
 pub struct Leg {
     pub from: Location,
     pub to: Location,
-    pub departue_time: Time,
-    pub arrival_time: Time,
+    pub scheduled_departure_time: Time,
+    pub actual_departure_time: Time,
+    pub scheduled_arrival_time: Time,
+    pub actual_arrival_time: Time,
     pub stops: Vec<LegStop>,
     pub leg_type: LegType,
 }
@@ -38,13 +41,19 @@ impl From<ParentType> for LegType {
 #[derive(Debug, Clone)]
 pub struct LegStop {
     pub location: Location,
-    pub departure_time: Time,
-    pub arrival_time: Time,
+    pub scheduled_departure_time: Time,
+    pub actual_departure_time: Time,
+    pub scheduled_arrival_time: Time,
+    pub actual_arrival_time: Time,
     pub distance_traveled: Option<Distance>,
 }
 
 impl LegStop {
-    pub(crate) fn generate_stops(parent: &Parent, repository: &Repository) -> Vec<Self> {
+    pub(crate) fn generate_stops(
+        parent: &Parent,
+        repository: &Repository,
+        realtime: &Realtime,
+    ) -> Vec<Self> {
         match parent.parent_type {
             ParentType::Transit(trip_idx) => {
                 let trip = &repository.trips[trip_idx as usize];
@@ -60,10 +69,17 @@ impl LegStop {
                         }
                         if in_trip {
                             let stop = &repository.stops[stop_time.stop_idx as usize];
+                            let delay = &realtime.stop_time_updates[stop_time.index as usize];
                             stops.push(LegStop {
                                 location: Location::Stop(stop.id.clone()),
-                                departure_time: stop_time.departure_time,
-                                arrival_time: stop_time.arrival_time,
+                                scheduled_departure_time: stop_time.departure_time,
+                                actual_departure_time: stop_time
+                                    .departure_time
+                                    .with_delay(delay.departure_delay),
+                                scheduled_arrival_time: stop_time.arrival_time,
+                                actual_arrival_time: stop_time
+                                    .arrival_time
+                                    .with_delay(delay.arrival_delay),
                                 distance_traveled: stop_time.distance_traveled,
                             });
                             if stop_time.stop_idx == to_idx && in_trip {
@@ -94,6 +110,7 @@ impl Itinerary {
         to: Location,
         path: Vec<Parent>,
         repository: &Repository,
+        realtime: &Realtime,
     ) -> Self {
         let legs = path
             .into_iter()
@@ -103,9 +120,11 @@ impl Itinerary {
                 Leg {
                     from: leg_from,
                     to: leg_to,
-                    departue_time: parent.departure_time,
-                    arrival_time: parent.arrival_time,
-                    stops: LegStop::generate_stops(&parent, repository),
+                    scheduled_departure_time: parent.scheduled_departure_time,
+                    actual_departure_time: parent.actual_departure_time,
+                    scheduled_arrival_time: parent.scheduled_arrival_time,
+                    actual_arrival_time: parent.actual_arrival_time,
+                    stops: LegStop::generate_stops(&parent, repository, realtime),
                     leg_type: parent.parent_type.into(),
                 }
             })

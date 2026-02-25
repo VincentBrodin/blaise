@@ -25,8 +25,10 @@ pub(crate) struct Parent {
     pub from: Point,
     pub to: Point,
     pub parent_type: ParentType,
-    pub departure_time: Time,
-    pub arrival_time: Time,
+    pub scheduled_departure_time: Time,
+    pub actual_departure_time: Time,
+    pub scheduled_arrival_time: Time,
+    pub actual_arrival_time: Time,
 }
 
 impl Parent {
@@ -34,15 +36,19 @@ impl Parent {
         from: Point,
         to: Point,
         trip: u32,
-        departure_time: Time,
-        arrival_time: Time,
+        scheduled_departure_time: Time,
+        actual_departure_time: Time,
+        scheduled_arrival_time: Time,
+        actual_arrival_time: Time,
     ) -> Self {
         Self {
             from,
             to,
             parent_type: ParentType::Transit(trip),
-            departure_time,
-            arrival_time,
+            scheduled_departure_time,
+            actual_departure_time,
+            scheduled_arrival_time,
+            actual_arrival_time,
         }
     }
     pub fn new_transfer(from: Point, to: Point, departure_time: Time, arrival_time: Time) -> Self {
@@ -50,8 +56,10 @@ impl Parent {
             from,
             to,
             parent_type: ParentType::Transfer,
-            departure_time,
-            arrival_time,
+            scheduled_departure_time: departure_time,
+            actual_departure_time: departure_time,
+            scheduled_arrival_time: arrival_time,
+            actual_arrival_time: arrival_time,
         }
     }
     pub fn new_walk(from: Point, to: Point, departure_time: Time, arrival_time: Time) -> Self {
@@ -59,8 +67,10 @@ impl Parent {
             from,
             to,
             parent_type: ParentType::Walk,
-            departure_time,
-            arrival_time,
+            scheduled_departure_time: departure_time,
+            actual_departure_time: departure_time,
+            scheduled_arrival_time: arrival_time,
+            actual_arrival_time: arrival_time,
         }
     }
 }

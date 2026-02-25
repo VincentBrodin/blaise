@@ -7,6 +7,7 @@ use tracing::{trace, warn};
 
 pub struct AppState {
     pub gtfs_data_path: PathBuf,
+    pub gtfs_rt_data_path: PathBuf,
     pub allocator_count: usize,
     pub repository: RwLock<Option<Repository>>,
     pub realtime: RwLock<Option<Realtime>>,

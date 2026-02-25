@@ -54,8 +54,10 @@ impl LocationDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegStopDto {
     pub location: LocationDto,
-    pub departure_time: Time,
-    pub arrival_time: Time,
+    pub scheduled_departure_time: Time,
+    pub actual_departure_time: Time,
+    pub scheduled_arrival_time: Time,
+    pub actual_arrival_time: Time,
     pub distance_traveled: Option<f32>,
 }
 
@@ -63,8 +65,10 @@ impl LegStopDto {
     pub fn from(leg_stop: LegStop, repository: &Repository) -> Option<Self> {
         Some(Self {
             location: LocationDto::from(leg_stop.location, repository)?,
-            departure_time: leg_stop.departure_time,
-            arrival_time: leg_stop.arrival_time,
+            scheduled_departure_time: leg_stop.scheduled_departure_time,
+            actual_departure_time: leg_stop.actual_departure_time,
+            scheduled_arrival_time: leg_stop.scheduled_arrival_time,
+            actual_arrival_time: leg_stop.actual_arrival_time,
             distance_traveled: leg_stop.distance_traveled.map(|value| value.as_meters()),
         })
     }
@@ -74,8 +78,10 @@ impl LegStopDto {
 pub struct LegDto {
     pub from: LocationDto,
     pub to: LocationDto,
-    pub departure_time: Time,
-    pub arrival_time: Time,
+    pub scheduled_departure_time: Time,
+    pub actual_departure_time: Time,
+    pub scheduled_arrival_time: Time,
+    pub actual_arrival_time: Time,
     pub stops: Vec<LegStopDto>,
     pub mode: Mode,
     pub head_sign: Option<String>,
@@ -168,8 +174,10 @@ impl LegDto {
         Some(Self {
             from: LocationDto::from(leg.from, repository)?,
             to: LocationDto::from(leg.to, repository)?,
-            departure_time: leg.departue_time,
-            arrival_time: leg.arrival_time,
+            scheduled_departure_time: leg.scheduled_departure_time,
+            actual_departure_time: leg.actual_departure_time,
+            scheduled_arrival_time: leg.scheduled_arrival_time,
+            actual_arrival_time: leg.actual_arrival_time,
             stops: stops?,
             mode: Mode::from_leg(leg.leg_type, repository),
             head_sign,
@@ -204,8 +212,8 @@ impl ItineraryDto {
             .collect();
 
         if let Some(legs) = legs {
-            let departure_time = legs.first().map(|leg| leg.departure_time)?;
-            let arrival_time = legs.last().map(|leg| leg.arrival_time)?;
+            let departure_time = legs.first().map(|leg| leg.actual_departure_time)?;
+            let arrival_time = legs.last().map(|leg| leg.actual_arrival_time)?;
 
             Some(Self {
                 from: LocationDto::from(itinerary.from, repository)?,

@@ -1,0 +1,22 @@
+meta {
+  name: gtfsrt/download
+  type: http
+  seq: 8
+}
+
+post {
+  url: http://localhost:3000/gtfsrt/download
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "gtfs_rt_urls": ["https://github.com"]
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

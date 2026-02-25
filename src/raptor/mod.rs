@@ -19,6 +19,7 @@ use crate::{
     raptor::explorer::{
         explore_routes, explore_routes_reverse, explore_transfers, explore_transfers_reverse,
     },
+    realtime::Realtime,
     repository::Repository,
     shared::time::{self, Time},
 };
@@ -66,11 +67,11 @@ impl TimeConstraint {
 /// necessary graph edges based on the `departure` time and `walk_distance` constraints.
 pub struct Raptor<'a> {
     repository: &'a Repository,
+    realtime: &'a Realtime,
     from: Location,
     to: Location,
     time_constraint: TimeConstraint,
     allow_walks: bool,
-    // walk_distance: Distance,
 }
 
 impl<'a> Raptor<'a> {
@@ -84,9 +85,15 @@ impl<'a> Raptor<'a> {
     /// * `repository` - A reference to the static transit data.
     /// * `from` - The starting location (Stop, Area, or Coordinate).
     /// * `to` - The target destination.
-    pub fn new(repository: &'a Repository, from: Location, to: Location) -> Self {
+    pub fn new(
+        repository: &'a Repository,
+        realtime: &'a Realtime,
+        from: Location,
+        to: Location,
+    ) -> Self {
         Self {
             repository,
+            realtime,
             from,
             to,
             time_constraint: TimeConstraint::Departure(Time::now()),
@@ -120,7 +127,7 @@ impl<'a> Raptor<'a> {
     }
 
     /// If the raptor algorithm is allowed to walk to stops, this can/will improve travel time in most cases.
-    pub fn allow_walks(mut self, value: bool) -> Self {
+    pub fn with_allow_walks(mut self, value: bool) -> Self {
         self.allow_walks = value;
         self
     }
@@ -258,14 +265,14 @@ impl<'a> Raptor<'a> {
 
             match self.time_constraint {
                 TimeConstraint::Arrival(_) => {
-                    explore_routes_reverse(self.repository, allocator);
+                    explore_routes_reverse(self.repository, self.realtime, allocator);
                     allocator.run_updates_reverse();
 
                     explore_transfers_reverse(self.allow_walks, self.repository, allocator);
                     allocator.run_updates_reverse();
                 }
                 TimeConstraint::Departure(_) => {
-                    explore_routes(self.repository, allocator);
+                    explore_routes(self.repository, self.realtime, allocator);
                     allocator.run_updates();
 
                     explore_transfers(self.allow_walks, self.repository, allocator);
@@ -305,7 +312,13 @@ impl<'a> Raptor<'a> {
                 target_round,
                 self.time_constraint,
             )?;
-            Ok(Itinerary::new(self.from, self.to, path, self.repository))
+            Ok(Itinerary::new(
+                self.from,
+                self.to,
+                path,
+                self.repository,
+                self.realtime,
+            ))
         } else {
             Err(self::Error::NoRouteFound)
         }

@@ -1,35 +1,43 @@
-use gtfs_rt::{FeedEntity, FeedMessage};
-use prost::Message;
-use tracing::debug;
+use std::fmt::Debug;
 
-use crate::repository::Repository;
+use gtfs_rt::{FeedEntity, FeedMessage, trip_update::StopTimeEvent};
+use prost::Message;
+use tracing::warn;
+
+use crate::{
+    repository::Repository,
+    shared::{Delay, Duration},
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Realtime {
     pub trip_updates: Vec<Option<u32>>,
-    pub stop_updates: Vec<Option<u32>>,
     pub updates: Vec<FeedEntity>,
+    pub stop_time_updates: Vec<StopTimeUpdate>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StopTimeUpdate {
+    pub arrival_delay: Delay,
+    pub departure_delay: Delay,
 }
 
 impl Realtime {
     pub fn new(repository: &Repository) -> Self {
         Self {
             trip_updates: vec![None; repository.trips.len()],
-            stop_updates: vec![None; repository.stops.len()],
+            stop_time_updates: vec![Default::default(); repository.stop_times.len()],
             updates: Vec::with_capacity(1024),
         }
     }
 
-    pub fn load(
-        mut self,
+    fn load_inner(
+        &mut self,
         bytes: &[u8],
         repository: &Repository,
-    ) -> Result<Self, prost::DecodeError> {
+    ) -> Result<(), prost::DecodeError> {
         let message = FeedMessage::decode(bytes)?;
         println!("Found {} updates", message.entity.len());
-        self.trip_updates.fill(None);
-        self.stop_updates.fill(None);
-        self.updates.clear();
         message
             .entity
             .into_iter()
@@ -39,14 +47,72 @@ impl Realtime {
                     && let Some(trip) = repository.trip_by_id(trip_update.trip.trip_id())
                 {
                     self.trip_updates[trip.index as usize] = Some(i as u32);
+                    let stop_times = repository.stop_times_by_trip_idx(trip.index);
+                    trip_update.stop_time_update.iter().for_each(|stu| {
+                        if let Some(seq) = stu.stop_sequence
+                            && let Ok(idx) = stop_times.binary_search_by_key(&seq, |st| st.sequence)
+                        {
+                            let st = &stop_times[idx];
+                            let arrival_delay = stop_time_event_to_delay(stu.arrival.as_ref());
+                            let departure_delay = stop_time_event_to_delay(stu.departure.as_ref());
+                            let update = StopTimeUpdate {
+                                arrival_delay,
+                                departure_delay,
+                            };
+                            self.stop_time_updates[st.index as usize] = update;
+                        } else {
+                            warn!(
+                                "Found invalid stop time update in {}",
+                                trip_update.trip.trip_id()
+                            )
+                        }
+                    });
                 }
-                if let Some(entity_stop) = &entity.stop
-                    && let Some(stop) = repository.stop_by_id(entity_stop.stop_id())
-                {
-                    self.stop_updates[stop.index as usize] = Some(i as u32);
-                }
+
                 self.updates.push(entity);
             });
+        Ok(())
+    }
+
+    pub fn load(
+        mut self,
+        bytes: &[u8],
+        repository: &Repository,
+    ) -> Result<Self, prost::DecodeError> {
+        self.trip_updates.fill(None);
+        self.stop_time_updates.fill(Default::default());
+        self.updates.clear();
+        self.load_inner(bytes, repository)?;
         Ok(self)
+    }
+
+    pub fn load_many(
+        mut self,
+        all_bytes: &[&[u8]],
+        repository: &Repository,
+    ) -> Result<Self, prost::DecodeError> {
+        self.trip_updates.fill(None);
+        self.stop_time_updates.fill(Default::default());
+        self.updates.clear();
+        all_bytes
+            .iter()
+            .try_for_each(|bytes| self.load_inner(bytes, repository))?;
+        Ok(self)
+    }
+}
+
+fn stop_time_event_to_delay(stop_time_event: Option<&StopTimeEvent>) -> Delay {
+    if let Some(stu) = stop_time_event {
+        let delay = stu.delay();
+
+        if delay == 0 {
+            Delay::OnTime
+        } else if delay > 0 {
+            Delay::Behind(Duration::from_seconds(delay.unsigned_abs()))
+        } else {
+            Delay::Ahead(Duration::from_seconds(delay.unsigned_abs()))
+        }
+    } else {
+        Delay::OnTime
     }
 }
