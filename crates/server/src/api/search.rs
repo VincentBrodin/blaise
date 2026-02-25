@@ -8,8 +8,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use blaise::prelude::*;
-use std::{collections::HashMap, sync::Arc};
+use blaise::shared::{AVERAGE_STOP_DISTANCE, Coordinate, Distance};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tracing::warn;
 
 pub async fn search_areas(

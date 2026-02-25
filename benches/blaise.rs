@@ -1,7 +1,7 @@
 use blaise::{
     gtfs::GtfsReader,
-    prelude::Repository,
     raptor::{Allocator, Location},
+    repository::Repository,
     shared::{Coordinate, Time},
 };
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -43,10 +43,10 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let gtfs = GtfsReader::new()
         .from_zip_cache(gtfs_data_path)
-        .expect("Failed to load GTFS zip");
-    let repository = Repository::new()
-        .load_gtfs(gtfs)
-        .expect("Failed to build repository");
+        .expect("Failed to create GTFS reader")
+        .par_read()
+        .expect("Failed to read GTFS data");
+    let repository = Repository::new().load_gtfs(gtfs);
 
     let mut allocator = Allocator::new(&repository);
 

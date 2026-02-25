@@ -28,6 +28,7 @@
             pkgs.taplo
             pkgs.nodePackages.vscode-json-languageserver
             pkgs.dockerfile-language-server
+            pkgs.protobuf
           ];
 
           # Libraries your project links to go here
@@ -39,7 +40,8 @@
           # and pkg-config is in nativeBuildInputs.
           shellHook = ''
             echo "🦀 Welcome to the Blaise development shell!"
-          '';
+            # alias bench = "bencher run --project blaise --adapter rust_criterion --branch v0.1.5 "cargo bench""
+            '';
         };
       });
     };

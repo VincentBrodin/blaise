@@ -1,6 +1,3 @@
-mod entities;
-pub mod source;
-
 use crate::{
     raptor::{Location, Raptor},
     shared::{
@@ -8,8 +5,12 @@ use crate::{
         geo::{AVERAGE_STOP_DISTANCE, Coordinate, Distance},
     },
 };
-pub use entities::*;
 use std::{collections::HashMap, sync::Arc};
+
+mod entities;
+pub mod source;
+
+pub use entities::*;
 
 pub type Cell = (i32, i32);
 

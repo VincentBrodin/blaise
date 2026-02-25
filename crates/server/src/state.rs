@@ -1,4 +1,4 @@
-use blaise::{raptor::Allocator, repository::Repository};
+use blaise::{raptor::Allocator, realtime::Realtime, repository::Repository};
 use crossbeam_queue::ArrayQueue;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,6 +9,7 @@ pub struct AppState {
     pub gtfs_data_path: PathBuf,
     pub allocator_count: usize,
     pub repository: RwLock<Option<Repository>>,
+    pub realtime: RwLock<Option<Realtime>>,
     pub allocator_pool: RwLock<Option<AllocatorPool>>,
 }
 

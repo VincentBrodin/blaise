@@ -1,5 +1,5 @@
 [package]
-version = "0.1.4"
+version = "0.1.5"
 name = "blaise"
 description = "A fast, local-first engine for GTFS transit data. Handles routing, fuzzy search, and geospatial queries without relying on external APIs."
 authors = ["Vincent Brodin <vincent.brodin21@gmail.com>"]
@@ -33,6 +33,11 @@ blaise = { path = "." }
 bitvec = "1.0.1"
 chrono = "0.4.42"
 csv = "1.4.0"
+dashmap = "6.1.0"
+gtfs-rt = "0.5.0"
+memmap2 = "0.9.9"
+prost = "0.11"
+prost-derive = "0.11"
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
@@ -41,3 +46,7 @@ zip = "7.2.0"
 
 [dev-dependencies]
 criterion = "0.8.1"
+
+
+[build-dependencies]
+prost-build = "0.11"

@@ -4,8 +4,8 @@ mod state;
 
 use crate::state::{AllocatorPool, AppState};
 use axum::routing::get;
-use blaise::prelude::*;
-use std::{env, path::Path, sync::Arc, time::Instant};
+use blaise::{gtfs::GtfsReader, realtime::Realtime, repository::Repository};
+use std::{env, fs::File, io::Read, path::Path, str::FromStr, sync::Arc, time::Instant};
 use tokio::{net::TcpListener, sync::RwLock};
 use tracing::{Level, info, warn};
 
@@ -34,6 +34,10 @@ async fn main() {
         .map(|path_str| Path::new(&path_str).to_owned())
         .expect("Missing GTFS_DATA_PATH");
 
+    let rt_data_path = env::var("RT_DATA_PATH")
+        .map(|path_str| Path::new(&path_str).to_owned())
+        .expect("Missing RT_DATA_PATH");
+
     let alloc_count = env::var("ALLOCATOR_COUNT")
         .map(|value| {
             value
@@ -49,27 +53,43 @@ async fn main() {
     // Built app state
     let app_state = AppState {
         repository: RwLock::new(None),
+        realtime: RwLock::new(None),
         allocator_pool: RwLock::new(None),
         allocator_count: alloc_count,
         gtfs_data_path,
     };
 
     if app_state.gtfs_data_path.exists() {
-        info!("Loading data...");
-        let now = Instant::now();
-        let reader = GtfsReader::new()
-            .from_zip(&app_state.gtfs_data_path)
-            .expect("Failed to build gtfs reader");
-        let repo = Repository::new()
-            .load_gtfs(reader)
-            .expect("Failed to load gtfs data in repository");
-        info!("Loading data took {:?}", now.elapsed());
+        info!("Reading GTFS data...");
+        let mut now = Instant::now();
+        let data = GtfsReader::new()
+            .from_zip_cache(&app_state.gtfs_data_path)
+            .expect("Failed to build gtfs reader")
+            .par_read()
+            .expect("Failed to read gtfs data");
+        info!("Reading GTFS data took {:?}", now.elapsed());
+        info!("Loading GTFS data...");
+        now = Instant::now();
+        let repo = Repository::new().load_gtfs(data);
+        info!("Loading GTFS data took {:?}", now.elapsed());
+        info!("Loading RT data...");
+        now = Instant::now();
+        let mut rt_file = File::open(rt_data_path).expect("Failed to open rt file");
+        let mut buf: Vec<u8> = Vec::with_capacity(1024);
+        rt_file
+            .read_to_end(&mut buf)
+            .expect("Failed to read rt file");
+        let rt = Realtime::new(&repo)
+            .load(&buf, &repo)
+            .expect("Failed to load rt file");
+        info!("Loading RT data took {:?}", now.elapsed());
         info!("Allocating {alloc_count} pools...");
         let now = Instant::now();
         let pool = AllocatorPool::new(alloc_count, &repo);
         info!("Allocating {alloc_count} pools took {:?}", now.elapsed());
         let _ = app_state.allocator_pool.write().await.replace(pool);
         let _ = app_state.repository.write().await.replace(repo);
+        let _ = app_state.realtime.write().await.replace(rt);
     } else {
         warn!("No GTFS data found.");
     }

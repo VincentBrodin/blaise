@@ -129,12 +129,12 @@ pub struct StopTime {
     pub headsign: Option<Arc<str>>,
     /// Cumulative distance traveled along the trip's shape.
     pub distance_traveled: Option<Distance>,
-    /// Policy for passenger boarding (Regular, No Pickup, etc.).
-    pub pickup_type: StopAccessType,
-    /// Policy for passenger alighting.
-    pub drop_off_type: StopAccessType,
-    /// Indicates if times are exact or estimates.
-    pub timepoint: Timepoint,
+    // Policy for passenger boarding (Regular, No Pickup, etc.).
+    // pub pickup_type: StopAccessType,
+    // Policy for passenger alighting.
+    // pub drop_off_type: StopAccessType,
+    // Indicates if times are exact or estimates.
+    // pub timepoint: Timepoint,
 }
 
 /// Metadata describing a contiguous range within a global array.

@@ -4,12 +4,12 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use blaise::prelude::*;
+use blaise::{gtfs::GtfsReader, repository::Repository};
 use futures_util::StreamExt;
 use reqwest::header::ACCEPT_ENCODING;
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, fs, path::Path, sync::Arc, time::Instant};
 use tokio::{fs::File, io::AsyncWriteExt};
-use tracing::error;
+use tracing::{error, info};
 
 pub async fn age(
     Query(_): Query<HashMap<String, String>>,
@@ -45,6 +45,8 @@ pub async fn fetch_url(
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, StatusCode> {
     if let Some(q) = params.get("q") {
+        info!("Downloading GTFS data...");
+        let mut now = Instant::now();
         let response = reqwest::Client::new()
             .get(q)
             .header(ACCEPT_ENCODING, "gzip, deflate")
@@ -82,18 +84,34 @@ pub async fn fetch_url(
             error!("Failed to flush file: {err}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+        info!("Downloading GTFS data took {:?}", now.elapsed());
 
+        info!("Reading GTFS data...");
+        now = Instant::now();
         let data = GtfsReader::new()
             .from_zip(&state.gtfs_data_path)
             .map_err(|err| {
-                error!("Failed create gtfs repository from zip: {err}");
+                error!("Failed create gtfs reader from zip: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .par_read()
+            .map_err(|err| {
+                error!("Failed read gtfs data from gtfs reader: {err}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-        let repo = Repository::new().load_gtfs(data).map_err(|err| {
-            error!("Failed load gtfs file: {err}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        info!("Reading GTFS data took {:?}", now.elapsed());
+        info!("Loading GTFS data...");
+        now = Instant::now();
+        let repo = Repository::new().load_gtfs(data);
+        info!("Loading GTFS data took {:?}", now.elapsed());
+        info!("Allocating {} pools...", state.allocator_count);
+        now = Instant::now();
         let pool = AllocatorPool::new(state.allocator_count, &repo);
+        info!(
+            "Allocating {} pools took {:?}",
+            state.allocator_count,
+            now.elapsed()
+        );
         let _ = state.allocator_pool.write().await.replace(pool);
         let _ = state.repository.write().await.replace(repo);
         Ok(().into_response())
