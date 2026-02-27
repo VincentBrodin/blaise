@@ -1,4 +1,7 @@
-use blaise::{repository::Stop, shared::geo::Coordinate};
+use blaise::{
+    repository::{Repository, Stop},
+    shared::geo::Coordinate,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,9 +12,9 @@ pub struct StopDto {
 }
 
 impl StopDto {
-    pub fn from(stop: &Stop) -> Self {
-        let id = stop.id.to_string();
-        let name = stop.name.to_string();
+    pub fn from(stop: &Stop, repository: &Repository) -> Self {
+        let id = repository.stop_str_by_slice(&stop.id_slice).to_string();
+        let name = repository.stop_str_by_slice(&stop.name_slice).to_string();
         let coordinate = stop.coordinate;
         Self {
             id,

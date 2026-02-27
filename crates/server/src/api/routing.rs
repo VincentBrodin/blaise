@@ -87,8 +87,8 @@ pub async fn routing(
             let to = repository.stop_by_id(to_stop).unwrap();
             debug!(
                 "{leg_type} {} -> {} @ {}/{} -> {}/{}",
-                from.name,
-                to.name,
+                repository.stop_str_by_slice(&from.name_slice),
+                repository.stop_str_by_slice(&to.name_slice),
                 leg.scheduled_departure_time.to_hms_string(),
                 leg.actual_departure_time.to_hms_string(),
                 leg.scheduled_departure_time.to_hms_string(),
@@ -99,7 +99,7 @@ pub async fn routing(
                     let stop = repository.stop_by_id(stop_id).unwrap();
                     debug!(
                         "| {} @ {}/{} -> {}/{}",
-                        stop.name,
+                        repository.stop_str_by_slice(&stop.name_slice),
                         leg.scheduled_departure_time.to_hms_string(),
                         leg.actual_departure_time.to_hms_string(),
                         leg.scheduled_departure_time.to_hms_string(),
@@ -114,7 +114,7 @@ pub async fn routing(
             debug!(
                 "{leg_type} {} -> {} @ {} -> {}",
                 from_coord,
-                to.name,
+                repository.stop_str_by_slice(&to.name_slice),
                 leg.actual_departure_time.to_hms_string(),
                 leg.actual_arrival_time.to_hms_string(),
             );
@@ -124,7 +124,7 @@ pub async fn routing(
             let from = repository.stop_by_id(from_stop).unwrap();
             debug!(
                 "{leg_type} {} -> {} @ {} -> {}",
-                from.name,
+                repository.stop_str_by_slice(&from.name_slice),
                 to_coord,
                 leg.actual_departure_time.to_hms_string(),
                 leg.actual_arrival_time.to_hms_string()
@@ -141,14 +141,17 @@ pub async fn routing(
     Ok(Json(dto).into_response())
 }
 
-fn location_from_str(repository: &Repository, str: &str) -> Result<Location, StatusCode> {
+fn location_from_str<'a>(
+    repository: &'a Repository,
+    str: &'a str,
+) -> Result<Location<'a>, StatusCode> {
     if str.contains(',') {
         let coordinate = Coordinate::from_str(str).map_err(|_| StatusCode::BAD_REQUEST)?;
-        Ok(coordinate.into())
+        Ok(Location::from_coordinate(coordinate))
     } else if let Some(area) = repository.area_by_id(str) {
-        Ok(area.into())
+        Ok(Location::from_area(area, repository))
     } else if let Some(stop) = repository.stop_by_id(str) {
-        Ok(stop.into())
+        Ok(Location::from_stop(stop, repository))
     } else {
         Err(StatusCode::BAD_REQUEST)
     }
@@ -159,8 +162,15 @@ fn leg_type_str(parent_type: &LegType, repository: &Repository) -> String {
         LegType::Transit(trip_idx) => {
             let trip = &repository.trips[*trip_idx as usize];
             let route = &repository.routes[trip.route_idx as usize];
-            let long_name = &route.long_name.clone().unwrap_or("UNKOWN".into());
-            let short_name = &route.short_name.clone().unwrap_or("UNKOWN".into());
+            let long_name = route
+                .long_name_slice
+                .map(|slice| repository.route_str_by_slice(&slice))
+                .unwrap_or("UNKOWN");
+
+            let short_name = route
+                .short_name_slice
+                .map(|slice| repository.route_str_by_slice(&slice))
+                .unwrap_or("UNKOWN");
             format!("Travel with {}({})", long_name, short_name)
         }
         LegType::Transfer => "Transfer".into(),

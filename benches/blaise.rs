@@ -9,8 +9,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::{env, hint::black_box, path::Path, time::Duration};
 
 fn short_solve(repository: &Repository, realtime: &Realtime, allocator: &mut Allocator) {
-    let from: Location = Coordinate::from((59.370_136, 18.001_749)).into();
-    let to: Location = Coordinate::from((59.335_34, 18.057_737)).into();
+    let from = Location::from_coordinate(Coordinate::from((59.370_136, 18.001_749)));
+    let to = Location::from_coordinate(Coordinate::from((59.335_34, 18.057_737)));
     let time = Time::from_seconds(28800);
     let raptor = Raptor::new(repository, realtime, from, to);
     allocator.reset();
@@ -18,8 +18,8 @@ fn short_solve(repository: &Repository, realtime: &Realtime, allocator: &mut All
 }
 
 fn long_solve(repository: &Repository, realtime: &Realtime, allocator: &mut Allocator) {
-    let from: Location = Coordinate::from((59.196_198, 17.628_841)).into();
-    let to: Location = Coordinate::from((59.857_834, 17.629_814)).into();
+    let from = Location::from_coordinate(Coordinate::from((59.196_198, 17.628_841)));
+    let to = Location::from_coordinate(Coordinate::from((59.857_834, 17.629_814)));
     let time = Time::from_seconds(28800);
     let raptor = Raptor::new(repository, realtime, from, to);
     allocator.reset();

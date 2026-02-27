@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use crate::shared::{
     Identifiable,
@@ -13,25 +13,18 @@ pub struct Area {
     /// The global internal index used for O(1) array lookups in the repository.
     pub index: u32,
     /// The unique external identifier.
-    pub id: Arc<str>,
+    pub id_slice: Slice,
     /// The display name of the area.
-    pub name: Arc<str>,
-
-    /// A search-optimized version of the name (e.g., lowercase, stripped of accents).
-    pub normalized_name: Arc<str>,
+    pub name_slice: Slice,
 }
 
 impl Identifiable for Area {
-    fn id(&self) -> &str {
-        &self.id
+    fn id_slice(&self) -> &Slice {
+        &self.id_slice
     }
 
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn normalized_name(&self) -> &str {
-        &self.normalized_name
+    fn name_slice(&self) -> &Slice {
+        &self.name_slice
     }
 }
 
@@ -64,11 +57,10 @@ pub struct Stop {
     /// The global internal index for this stop.
     pub index: u32,
     /// Unique external identifier for the stop.
-    pub id: Arc<str>,
-    /// Human-readable name (e.g., "Main St & 4th Ave").
-    pub name: Arc<str>,
-    /// Normalized name used for fuzzy search comparisons.
-    pub normalized_name: Arc<str>,
+    pub id_slice: Slice,
+    /// Slice to human-readable name (e.g., "Main St & 4th Ave").
+    pub name_slice: Slice,
+    /// Geo location of the stop
     pub coordinate: Coordinate,
     /// The index of the parent station/platform
     pub parent_index: Option<u32>,
@@ -77,16 +69,12 @@ pub struct Stop {
 }
 
 impl Identifiable for Stop {
-    fn id(&self) -> &str {
-        &self.id
+    fn id_slice(&self) -> &Slice {
+        &self.id_slice
     }
 
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn normalized_name(&self) -> &str {
-        &self.normalized_name
+    fn name_slice(&self) -> &Slice {
+        &self.name_slice
     }
 }
 
@@ -126,7 +114,7 @@ pub struct StopTime {
     /// Scheduled departure time (stored as seconds since midnight).
     pub departure_time: Time,
     /// Destination shown to passengers when at this stop.
-    pub headsign: Option<Arc<str>>,
+    pub headsign: Option<Slice>,
     /// Cumulative distance traveled along the trip's shape.
     pub distance_traveled: Option<Distance>,
     // Policy for passenger boarding (Regular, No Pickup, etc.).
@@ -144,6 +132,14 @@ pub struct Slice {
     pub start_idx: u32,
     /// The total number of elements in the array.
     pub count: u32,
+}
+
+impl Slice {
+    pub fn range(&self) -> Range<usize> {
+        let start = self.start_idx as usize;
+        let end = start + self.count as usize;
+        start..end
+    }
 }
 
 /// A connection between two points in the network, often representing walking or shuttle legs.
@@ -164,26 +160,25 @@ pub struct Transfer {
 #[derive(Debug, Default, Clone)]
 pub struct Trip {
     pub index: u32,
-    pub id: Arc<str>,
+    pub id_slice: Slice,
     /// Pointer to the parent [`Route`].
     pub route_idx: u32,
     /// Pointer to the optimized [`RaptorRoute`] used by the routing engine.
     pub raptor_route_idx: u32,
-    pub head_sign: Option<Arc<str>>,
-    pub short_name: Option<Arc<str>>,
+    pub headsign_slice: Option<Slice>,
+    pub short_name_slice: Option<Slice>,
 }
 
 /// A grouping of trips that are displayed to riders under a single name (e.g., "Blue Line").
 #[derive(Debug, Default, Clone)]
 pub struct Route {
     pub index: u32,
-    pub id: Arc<str>,
-    pub agency_id: Arc<str>,
-    pub short_name: Option<Arc<str>>,
-    pub long_name: Option<Arc<str>>,
+    pub id_slice: Slice,
+    pub short_name_slice: Option<Slice>,
+    pub long_name_slice: Option<Slice>,
     /// Classification of the vehicle (0: Tram, 1: Subway, 3: Bus, etc.).
     pub route_type: i32,
-    pub route_desc: Option<Arc<str>>,
+    pub route_desc_slice: Option<Slice>,
 }
 
 #[derive(Debug, Default, Clone)]

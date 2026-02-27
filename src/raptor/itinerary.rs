@@ -10,14 +10,14 @@ use crate::{
 use serde::Serialize;
 
 #[derive(Debug, Clone)]
-pub struct Leg {
-    pub from: Location,
-    pub to: Location,
+pub struct Leg<'a> {
+    pub from: Location<'a>,
+    pub to: Location<'a>,
     pub scheduled_departure_time: Time,
     pub actual_departure_time: Time,
     pub scheduled_arrival_time: Time,
     pub actual_arrival_time: Time,
-    pub stops: Vec<LegStop>,
+    pub stops: Vec<LegStop<'a>>,
     pub leg_type: LegType,
 }
 
@@ -39,8 +39,8 @@ impl From<ParentType> for LegType {
 }
 
 #[derive(Debug, Clone)]
-pub struct LegStop {
-    pub location: Location,
+pub struct LegStop<'a> {
+    pub location: Location<'a>,
     pub scheduled_departure_time: Time,
     pub actual_departure_time: Time,
     pub scheduled_arrival_time: Time,
@@ -48,10 +48,10 @@ pub struct LegStop {
     pub distance_traveled: Option<Distance>,
 }
 
-impl LegStop {
+impl<'a> LegStop<'a> {
     pub(crate) fn generate_stops(
         parent: &Parent,
-        repository: &Repository,
+        repository: &'a Repository,
         realtime: &Realtime,
     ) -> Vec<Self> {
         match parent.parent_type {
@@ -71,7 +71,7 @@ impl LegStop {
                             let stop = &repository.stops[stop_time.stop_idx as usize];
                             let delay = &realtime.stop_time_updates[stop_time.index as usize];
                             stops.push(LegStop {
-                                location: Location::Stop(stop.id.clone()),
+                                location: Location::from_stop(stop, repository),
                                 scheduled_departure_time: stop_time.departure_time,
                                 actual_departure_time: stop_time
                                     .departure_time
@@ -98,25 +98,25 @@ impl LegStop {
 }
 
 #[derive(Debug, Clone)]
-pub struct Itinerary {
-    pub from: Location,
-    pub to: Location,
-    pub legs: Vec<Leg>,
+pub struct Itinerary<'a> {
+    pub from: Location<'a>,
+    pub to: Location<'a>,
+    pub legs: Vec<Leg<'a>>,
 }
 
-impl Itinerary {
+impl<'a> Itinerary<'a> {
     pub(crate) fn new(
-        from: Location,
-        to: Location,
+        from: Location<'a>,
+        to: Location<'a>,
         path: Vec<Parent>,
-        repository: &Repository,
+        repository: &'a Repository,
         realtime: &Realtime,
     ) -> Self {
         let legs = path
             .into_iter()
             .map(|parent| {
-                let leg_from = point_to_location(&parent.from, repository);
-                let leg_to = point_to_location(&parent.to, repository);
+                let leg_from = point_to_location(parent.from, repository);
+                let leg_to = point_to_location(parent.to, repository);
                 Leg {
                     from: leg_from,
                     to: leg_to,
@@ -133,12 +133,12 @@ impl Itinerary {
     }
 }
 
-fn point_to_location(point: &Point, repository: &Repository) -> Location {
+fn point_to_location<'a>(point: Point, repository: &'a Repository) -> Location<'a> {
     match point {
-        Point::Coordinate(coordinate) => (*coordinate).into(),
+        Point::Coordinate(coordinate) => Location::from_coordinate(coordinate),
         Point::Stop(idx) => {
-            let stop = &repository.stops[*idx as usize];
-            Location::Stop(stop.id.clone())
+            let stop = &repository.stops[idx as usize];
+            Location::from_stop(stop, repository)
         }
     }
 }

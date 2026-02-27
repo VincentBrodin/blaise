@@ -27,7 +27,7 @@ impl From<Coordinate> for LocationDto {
 impl LocationDto {
     pub fn from(location: Location, repository: &Repository) -> Option<Self> {
         match location {
-            Location::Area(id) => repository.area_by_id(&id).map(|val| {
+            Location::Area(id) => repository.area_by_id(id).map(|val| {
                 let coordinate: Coordinate = repository
                     .stops_by_area_idx(val.index)
                     .into_iter()
@@ -35,15 +35,15 @@ impl LocationDto {
                     .sum();
                 LocationDto {
                     kind: "area".into(),
-                    id: val.id.to_string(),
-                    name: val.name.to_string(),
+                    id: repository.area_str_by_slice(&val.id_slice).to_string(),
+                    name: repository.area_str_by_slice(&val.name_slice).to_string(),
                     coordinate,
                 }
             }),
-            Location::Stop(id) => repository.stop_by_id(&id).map(|val| LocationDto {
+            Location::Stop(id) => repository.stop_by_id(id).map(|val| LocationDto {
                 kind: "stop".into(),
-                id: val.id.to_string(),
-                name: val.name.to_string(),
+                id: repository.stop_str_by_slice(&val.id_slice).to_string(),
+                name: repository.stop_str_by_slice(&val.name_slice).to_string(),
                 coordinate: val.coordinate,
             }),
             Location::Coordinate(coordinate) => Some(coordinate.into()),
@@ -154,18 +154,15 @@ impl LegDto {
         let (head_sign, long_name, short_name) = if let LegType::Transit(trip_idx) = leg.leg_type {
             let trip = &repository.trips[trip_idx as usize];
             let head_sign = trip
-                .head_sign
-                .as_ref()
-                .map(|head_sign| head_sign.to_string());
+                .headsign_slice
+                .map(|slice| repository.trip_str_by_slice(&slice).to_string());
             let route = repository.route_by_trip_idx(trip_idx);
             let long_name = route
-                .long_name
-                .as_ref()
-                .map(|long_name| long_name.to_string());
+                .long_name_slice
+                .map(|slice| repository.route_str_by_slice(&slice).to_string());
             let short_name = route
-                .short_name
-                .as_ref()
-                .map(|short_name| short_name.to_string());
+                .short_name_slice
+                .map(|slice| repository.route_str_by_slice(&slice).to_string());
             (head_sign, long_name, short_name)
         } else {
             (None, None, None)
