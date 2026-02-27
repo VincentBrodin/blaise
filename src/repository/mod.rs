@@ -2,7 +2,7 @@ use crate::shared::{
     self,
     geo::{AVERAGE_STOP_DISTANCE, Coordinate, Distance},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 mod entities;
 pub mod source;
@@ -36,18 +36,23 @@ pub struct Repository {
     pub transfers: Box<[Transfer]>,
     /// All the shapes.
     pub shapes: Box<[Shape]>,
-    /// A big string holding all the strings in the dataset
-    pub strings: Box<str>,
+
+    // --- String Lookups ---
+    stop_strs: Box<str>,
+    area_strs: Box<str>,
+    trip_strs: Box<str>,
+    route_strs: Box<str>,
+    stop_time_strs: Box<str>,
 
     // --- Primary Key Lookups ---
-    /// Maps a unique `Stop.id` string to its index within the `stops` slice.
-    stop_lookup: HashMap<Arc<str>, u32>,
-    /// Maps a unique `Trip.id` string to its index within the `trips` slice.
-    trip_lookup: HashMap<Arc<str>, u32>,
-    /// Maps a unique `Area.id` string to its index within the `areas` slice.
-    area_lookup: HashMap<Arc<str>, u32>,
-    /// Maps a unique `Route.id` string to its index within the `routes` slice.
-    route_lookup: HashMap<Arc<str>, u32>,
+    /// Sorts each `Stop.idx` its index within the `stops` slice based on it's id.
+    stop_lookup: Box<[u32]>,
+    /// Sorts each `Trip.idx` its index within the `trips` slice based on it's id.
+    trip_lookup: Box<[u32]>,
+    /// Sorts each `Area.idx` its index within the `areas` slice based on it's id.
+    area_lookup: Box<[u32]>,
+    /// Sorts each `Route.idx` its index within the `routes` slice based on it's id.
+    route_lookup: Box<[u32]>,
     /// Spatial index used to find stops within specific grid cells.
     stop_distance_lookup: HashMap<Cell, Box<[u32]>>,
 
@@ -90,38 +95,92 @@ impl Repository {
     // --- Primary Key Lookups Functions ---
 
     /// Retrieves a [`&str`] by its slice.
-    pub fn str_by_slice(&self, slice: &Slice) -> &str {
-        let start = slice.start_idx as usize;
-        let end = start + slice.count as usize;
-        &self.strings[start..end]
+    pub fn stop_str_by_slice(&self, slice: &Slice) -> &str {
+        &self.stop_strs[slice.range()]
+    }
+    pub fn area_str_by_slice(&self, slice: &Slice) -> &str {
+        &self.area_strs[slice.range()]
+    }
+    pub fn route_str_by_slice(&self, slice: &Slice) -> &str {
+        &self.route_strs[slice.range()]
+    }
+    pub fn trip_str_by_slice(&self, slice: &Slice) -> &str {
+        &self.trip_strs[slice.range()]
+    }
+    pub fn stop_time_str_by_slice(&self, slice: &Slice) -> &str {
+        &self.stop_time_strs[slice.range()]
     }
 
-    /// Retrieves a [`Stop`] by its string identifier `Stop.id`.
+    /// Retrieves a [`Stop`] by its string identifier `Stop.id_slice`.
     /// Returns `None` if the ID does not exist.
     pub fn stop_by_id(&self, id: &str) -> Option<&Stop> {
-        let stop_index = self.stop_lookup.get(id)?;
-        Some(&self.stops[*stop_index as usize])
+        let result = self.stop_lookup.binary_search_by(|&stop_idx| {
+            let stop = &self.stops[stop_idx as usize];
+            let current_id = self.stop_str_by_slice(&stop.id_slice);
+            current_id.cmp(id)
+        });
+
+        match result {
+            Ok(lookup_idx) => {
+                let stop_idx = self.stop_lookup[lookup_idx];
+                Some(&self.stops[stop_idx as usize])
+            }
+            Err(_) => None,
+        }
     }
 
-    /// Retrieves a [`Area`] by its string identifier `Area.id`.
+    /// Retrieves a [`Area`] by its string identifier `Area.id_slice`.
     /// Returns `None` if the ID does not exist.
     pub fn area_by_id(&self, id: &str) -> Option<&Area> {
-        let area_index = self.area_lookup.get(id)?;
-        Some(&self.areas[*area_index as usize])
+        let result = self.area_lookup.binary_search_by(|&area_idx| {
+            let area = &self.areas[area_idx as usize];
+            let current_id = self.area_str_by_slice(&area.id_slice);
+            current_id.cmp(id)
+        });
+
+        match result {
+            Ok(lookup_idx) => {
+                let area_idx = self.area_lookup[lookup_idx];
+                Some(&self.areas[area_idx as usize])
+            }
+            Err(_) => None,
+        }
     }
 
-    /// Retrieves a [`Trip`] by its string identifier `Trip.id`.
+    /// Retrieves a [`Trip`] by its string identifier `Trip.id_slice`.
     /// Returns `None` if the ID does not exist.
     pub fn trip_by_id(&self, id: &str) -> Option<&Trip> {
-        let trip_index = self.trip_lookup.get(id)?;
-        Some(&self.trips[*trip_index as usize])
+        let result = self.trip_lookup.binary_search_by(|&trip_idx| {
+            let trip = &self.trips[trip_idx as usize];
+            let current_id = self.trip_str_by_slice(&trip.id_slice);
+            current_id.cmp(id)
+        });
+
+        match result {
+            Ok(lookup_idx) => {
+                let trip_idx = self.trip_lookup[lookup_idx];
+                Some(&self.trips[trip_idx as usize])
+            }
+            Err(_) => None,
+        }
     }
 
     /// Retrieves a [`Route`] by its string identifier `Route.id`.
     /// Returns `None` if the ID does not exist.
     pub fn route_by_id(&self, id: &str) -> Option<&Route> {
-        let index = self.route_lookup.get(id)?;
-        Some(&self.routes[*index as usize])
+        let result = self.route_lookup.binary_search_by(|&route_idx| {
+            let route = &self.routes[route_idx as usize];
+            let current_id = self.route_str_by_slice(&route.id_slice);
+            current_id.cmp(id)
+        });
+
+        match result {
+            Ok(lookup_idx) => {
+                let route_idx = self.route_lookup[lookup_idx];
+                Some(&self.routes[route_idx as usize])
+            }
+            Err(_) => None,
+        }
     }
 
     // --- Relationship Indicies (Adjacency Lists) Functions ---

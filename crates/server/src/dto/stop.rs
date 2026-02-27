@@ -13,8 +13,8 @@ pub struct StopDto {
 
 impl StopDto {
     pub fn from(stop: &Stop, repository: &Repository) -> Self {
-        let id = stop.id.to_string();
-        let name = repository.str_by_slice(&stop.name_slice).to_string();
+        let id = repository.stop_str_by_slice(&stop.id_slice).to_string();
+        let name = repository.stop_str_by_slice(&stop.name_slice).to_string();
         let coordinate = stop.coordinate;
         Self {
             id,

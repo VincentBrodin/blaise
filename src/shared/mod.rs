@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use crate::repository::{Repository, Slice};
 
 pub trait Identifiable {
-    fn id(&self) -> &str;
+    fn id_slice(&self) -> &Slice;
     fn name_slice(&self) -> &Slice;
 }
 
@@ -25,8 +25,9 @@ where
     let mut results: Vec<(&T, f64)> = haystack
         .par_iter()
         .filter_map(|hay| {
-            let hay_name = repository.str_by_slice(hay.name_slice());
-            let score = fuzzy::score(&normalized_needle, hay_name);
+            // let hay_name = repository.str_by_slice(hay.name_slice());
+            // let score = fuzzy::score(&normalized_needle, hay_name);
+            let score = fuzzy::score(&normalized_needle, "abc");
             if score > 0.1 {
                 Some((hay, score))
             } else {

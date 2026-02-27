@@ -68,8 +68,8 @@ impl TimeConstraint {
 pub struct Raptor<'a> {
     repository: &'a Repository,
     realtime: &'a Realtime,
-    from: Location,
-    to: Location,
+    from: Location<'a>,
+    to: Location<'a>,
     time_constraint: TimeConstraint,
     allow_walks: bool,
 }
@@ -88,8 +88,8 @@ impl<'a> Raptor<'a> {
     pub fn new(
         repository: &'a Repository,
         realtime: &'a Realtime,
-        from: Location,
-        to: Location,
+        from: Location<'a>,
+        to: Location<'a>,
     ) -> Self {
         Self {
             repository,
@@ -148,7 +148,7 @@ impl<'a> Raptor<'a> {
     /// This method leverages the parallel optimizations in the underlying [`Repository`].
     /// Execution time typically scales with the number of possible routes between
     /// the origin and destination.
-    pub fn solve(self) -> Result<Itinerary, self::Error> {
+    pub fn solve(self) -> Result<Itinerary<'a>, self::Error> {
         let mut allocator = Allocator::new(self.repository);
         self.solve_with_allocator(&mut allocator)
     }
@@ -167,7 +167,10 @@ impl<'a> Raptor<'a> {
     /// This method leverages the parallel optimizations in the underlying [`Repository`].
     /// Execution time typically scales with the number of possible routes between
     /// the origin and destination.
-    pub fn solve_with_allocator(self, allocator: &mut Allocator) -> Result<Itinerary, self::Error> {
+    pub fn solve_with_allocator(
+        self,
+        allocator: &mut Allocator,
+    ) -> Result<Itinerary<'a>, self::Error> {
         let from_stops = stops_by_location(self.repository, &self.from)?;
         let to_stops = stops_by_location(self.repository, &self.to)?;
 

@@ -14,55 +14,65 @@ use crate::{
 };
 use dashmap::DashMap;
 use rayon::prelude::*;
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, time::Instant};
 use tracing::debug;
 
 impl Repository {
     pub fn load_gtfs(mut self, gtfs: GtfsData) -> Self {
-        let mut str_map = StrSliceMap::new();
-
-        self.load_stops(gtfs.stops, &mut str_map);
-        self.load_areas(gtfs.areas, &mut str_map);
+        self.load_stops(gtfs.stops);
+        self.load_areas(gtfs.areas);
         self.load_area_to_stops(gtfs.stop_areas);
         let shapes_lookup = self.load_shapes(gtfs.shapes);
         self.load_routes(gtfs.routes);
         let trip_to_shape_slice = self.load_trips(gtfs.trips, shapes_lookup);
         self.load_transfers(gtfs.transfers);
-        self.load_stop_times(gtfs.stop_times, &mut str_map);
+        self.load_stop_times(gtfs.stop_times);
         self.generate_geo_hash();
         self.generate_raptor_routes(trip_to_shape_slice);
         self.generate_walks();
-        self.strings = str_map.take().into_boxed_str();
         self
     }
 
-    fn load_stops(&mut self, gtfs_stops: Vec<GtfsStop>, str_map: &mut StrSliceMap) {
+    fn load_stops(&mut self, gtfs_stops: Vec<GtfsStop>) {
         debug!("Loading stops...");
         let now = Instant::now();
-        let mut stop_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_stops.len());
         let mut stops: Vec<(Stop, Option<String>)> = Vec::with_capacity(gtfs_stops.len());
+        let mut strings = StrSliceMap::new();
         gtfs_stops
             .into_iter()
             .enumerate()
             .for_each(|(i, mut stop)| {
-                let name_slice = str_map.get_slice(stop.stop_name.clone());
                 let parent_station = stop.parent_station.take();
-                let mut value: Stop = stop.into();
-                value.index = i as u32;
-                value.name_slice = name_slice;
-                stop_lookup.insert(value.id.clone(), i as u32);
+                let value = Stop {
+                    index: i as u32,
+                    id_slice: strings.get_slice(stop.stop_id),
+                    name_slice: strings.get_slice(stop.stop_name),
+                    coordinate: Coordinate {
+                        latitude: stop.stop_lat,
+                        longitude: stop.stop_lon,
+                    },
+                    parent_index: None,
+                };
                 stops.push((value, parent_station));
             });
-        self.stop_lookup = stop_lookup;
+
+        self.stop_strs = strings.take().into_boxed_str();
+        dbg!(&self.stop_strs);
+        let mut lookup_vec: Vec<u32> = (0..stops.len() as u32).collect();
+        lookup_vec.par_sort_unstable_by(|&a, &b| {
+            let id_a = self.stop_str_by_slice(&stops[a as usize].0.id_slice);
+            let id_b = self.stop_str_by_slice(&stops[b as usize].0.id_slice);
+            id_a.cmp(id_b)
+        });
+        self.stop_lookup = lookup_vec.into_boxed_slice();
 
         let mut station_to_stops: Vec<Vec<u32>> = vec![Vec::new(); stops.len()];
         stops
             .iter_mut()
-            .filter_map(|(stop, parent_station)| {
-                if let Some(parent_station) = parent_station {
-                    self.stop_lookup
-                        .get(parent_station.as_str())
-                        .map(|parent_staiton| (*parent_staiton, stop))
+            .filter_map(|(stop, parent_station_id)| {
+                if let Some(parent_station_id) = parent_station_id {
+                    self.stop_by_id(parent_station_id.as_str())
+                        .map(|parent_station| (parent_station.index, stop))
                 } else {
                     None
                 }
@@ -85,21 +95,30 @@ impl Repository {
         );
     }
 
-    fn load_areas(&mut self, gtfs_areas: Vec<GtfsArea>, str_map: &mut StrSliceMap) {
+    fn load_areas(&mut self, gtfs_areas: Vec<GtfsArea>) {
         debug!("Loading areas...");
         let now = Instant::now();
-        let mut area_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_areas.len());
         let mut areas: Vec<Area> = Vec::with_capacity(gtfs_areas.len());
+        let mut strings = StrSliceMap::new();
         gtfs_areas.into_iter().enumerate().for_each(|(i, area)| {
-            let name_slice = str_map.get_slice(area.area_name.clone());
-            let mut value: Area = area.into();
-            value.name_slice = name_slice;
-            value.index = i as u32;
-            area_lookup.insert(value.id.clone(), i as u32);
+            let value = Area {
+                index: i as u32,
+                id_slice: strings.get_slice(area.area_id),
+                name_slice: strings.get_slice(area.area_name),
+            };
             areas.push(value);
         });
         self.areas = areas.into();
-        self.area_lookup = area_lookup;
+
+        self.area_strs = strings.take().into_boxed_str();
+        let mut lookup_vec: Vec<u32> = (0..self.areas.len() as u32).collect();
+        lookup_vec.par_sort_unstable_by(|&a, &b| {
+            let id_a = self.area_str_by_slice(&self.areas[a as usize].id_slice);
+            let id_b = self.area_str_by_slice(&self.areas[b as usize].id_slice);
+            id_a.cmp(id_b)
+        });
+        self.area_lookup = lookup_vec.into_boxed_slice();
+
         debug!(
             "Loading {} areas took {:?}",
             self.areas.len(),
@@ -115,12 +134,16 @@ impl Repository {
         let mut stop_to_area: Vec<Option<u32>> = vec![None; self.stops.len()];
         gtfs_stop_areas.into_iter().for_each(|value| {
             // TEMP
-            let stop_idx = self.stop_lookup.get(value.stop_id.as_str()).unwrap();
+            let stop = self
+                .stop_by_id(value.stop_id.as_str())
+                .expect("Could not find stop by id");
             // TEMP
-            let area_idx = self.area_lookup.get(value.area_id.as_str()).unwrap();
+            let area = self
+                .area_by_id(value.area_id.as_str())
+                .expect("Could not find stop by id");
 
-            stop_to_area[*stop_idx as usize] = Some(*area_idx);
-            area_to_stops[*area_idx as usize].push(*stop_idx);
+            stop_to_area[stop.index as usize] = Some(area.index);
+            area_to_stops[area.index as usize].push(stop.index);
         });
         self.stop_to_area = stop_to_area.into();
         let area_to_stops: Box<[Box<[u32]>]> =
@@ -183,16 +206,38 @@ impl Repository {
     fn load_routes(&mut self, gtfs_routes: Vec<GtfsRoute>) {
         debug!("Loading routes...");
         let now = Instant::now();
-        let mut route_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_routes.len());
         let mut routes: Vec<Route> = Vec::with_capacity(gtfs_routes.len());
-        gtfs_routes.into_iter().enumerate().for_each(|(i, route)| {
-            let mut value: Route = route.into();
-            value.index = i as u32;
-            route_lookup.insert(value.id.clone(), i as u32);
-            routes.push(value);
+        let mut strings = StrSliceMap::new();
+        gtfs_routes
+            .into_iter()
+            .enumerate()
+            .for_each(|(i, mut route)| {
+                let value = Route {
+                    index: i as u32,
+                    id_slice: strings.get_slice(route.route_id),
+                    short_name_slice: route
+                        .route_short_name
+                        .take()
+                        .map(|val| strings.get_slice(val)),
+                    long_name_slice: route
+                        .route_long_name
+                        .take()
+                        .map(|val| strings.get_slice(val)),
+                    route_type: route.route_type,
+                    route_desc_slice: route.route_desc.take().map(|val| strings.get_slice(val)),
+                };
+                routes.push(value);
+            });
+        self.routes = routes.into_boxed_slice();
+        self.route_strs = strings.take().into_boxed_str();
+        let mut lookup_vec: Vec<u32> = (0..self.routes.len() as u32).collect();
+        lookup_vec.par_sort_unstable_by(|&a, &b| {
+            let id_a = self.route_str_by_slice(&self.routes[a as usize].id_slice);
+            let id_b = self.route_str_by_slice(&self.routes[b as usize].id_slice);
+            id_a.cmp(id_b)
         });
-        self.routes = routes.into();
-        self.route_lookup = route_lookup;
+        self.route_lookup = lookup_vec.into_boxed_slice();
+
         debug!(
             "Loading {} routes took {:?}",
             self.routes.len(),
@@ -207,33 +252,50 @@ impl Repository {
     ) -> Vec<Option<Slice>> {
         debug!("Loading trips...");
         let now = Instant::now();
-        let mut trip_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_trips.len());
         let mut trip_to_shapes_slice: Vec<Option<Slice>> = Vec::with_capacity(gtfs_trips.len());
         let mut route_to_trips: Vec<Vec<u32>> = vec![Vec::new(); self.routes.len()];
         let mut trip_to_route: Vec<u32> = Vec::with_capacity(gtfs_trips.len());
         let mut trips: Vec<Trip> = Vec::with_capacity(gtfs_trips.len());
-        gtfs_trips.into_iter().enumerate().for_each(|(i, trip)| {
-            let shape_slice = trip
-                .shape_id
-                .and_then(|shape_id| shapes_lookup.get(&shape_id))
-                .copied();
-            trip_to_shapes_slice.push(shape_slice);
-            let route_index = self.route_lookup.get(trip.route_id.as_str()).unwrap();
-            let value = Trip {
-                index: i as u32,
-                id: trip.trip_id.into(),
-                route_idx: *route_index,
-                raptor_route_idx: 0,
-                head_sign: trip.trip_headsign.map(|val| val.into()),
-                short_name: trip.trip_short_name.map(|val| val.into()),
-            };
-            route_to_trips[*route_index as usize].push(i as u32);
-            trip_to_route.push(*route_index);
-            trip_lookup.insert(value.id.clone(), i as u32);
-            trips.push(value);
+        let mut strings = StrSliceMap::new();
+
+        gtfs_trips
+            .into_iter()
+            .enumerate()
+            .for_each(|(i, mut trip)| {
+                let shape_slice = trip
+                    .shape_id
+                    .and_then(|shape_id| shapes_lookup.get(&shape_id))
+                    .copied();
+                trip_to_shapes_slice.push(shape_slice);
+                let route = self
+                    .route_by_id(trip.route_id.as_str())
+                    .expect("Could not get route by id");
+                let value = Trip {
+                    index: i as u32,
+                    id_slice: strings.get_slice(trip.trip_id),
+                    route_idx: route.index,
+                    raptor_route_idx: 0,
+                    headsign_slice: trip.trip_headsign.take().map(|val| strings.get_slice(val)),
+                    short_name_slice: trip
+                        .trip_short_name
+                        .take()
+                        .map(|val| strings.get_slice(val)),
+                };
+                route_to_trips[route.index as usize].push(i as u32);
+                trip_to_route.push(route.index);
+                trips.push(value);
+            });
+        self.trips = trips.into_boxed_slice();
+        self.trip_strs = strings.take().into_boxed_str();
+
+        let mut lookup_vec: Vec<u32> = (0..self.trips.len() as u32).collect();
+        lookup_vec.par_sort_unstable_by(|&a, &b| {
+            let id_a = self.trip_str_by_slice(&self.trips[a as usize].id_slice);
+            let id_b = self.trip_str_by_slice(&self.trips[b as usize].id_slice);
+            id_a.cmp(id_b)
         });
-        self.trips = trips.into();
-        self.trip_lookup = trip_lookup;
+        self.trip_lookup = lookup_vec.into_boxed_slice();
+
         self.trip_to_route = trip_to_route.into();
         let route_to_trips: Box<[Box<[u32]>]> =
             route_to_trips.into_iter().map(|val| val.into()).collect();
@@ -255,32 +317,37 @@ impl Repository {
             .into_iter()
             .enumerate()
             .for_each(|(i, transfer)| {
-                let from_stop_idx = *self
-                    .stop_lookup
-                    .get(transfer.from_stop_id.as_str())
-                    .unwrap();
+                let from_stop = self
+                    .stop_by_id(transfer.from_stop_id.as_str())
+                    .expect("Could not get stop by id");
 
-                let to_stop_idx = *self.stop_lookup.get(transfer.to_stop_id.as_str()).unwrap();
+                let to_stop = self
+                    .stop_by_id(transfer.to_stop_id.as_str())
+                    .expect("Could not get stop by id");
 
                 let from_trip_idx = if let Some(trip_id) = transfer.from_trip_id {
-                    let trip_idx = *self.trip_lookup.get(trip_id.as_str()).unwrap();
-                    Some(trip_idx)
+                    let trip = self
+                        .stop_by_id(trip_id.as_str())
+                        .expect("Could not get trip by id");
+                    Some(trip.index)
                 } else {
                     None
                 };
 
                 let to_trip_idx = if let Some(trip_id) = transfer.to_trip_id {
-                    let trip_idx = *self.trip_lookup.get(trip_id.as_str()).unwrap();
-                    Some(trip_idx)
+                    let trip = self
+                        .stop_by_id(trip_id.as_str())
+                        .expect("Could not get trip by id");
+                    Some(trip.index)
                 } else {
                     None
                 };
 
-                stop_to_transfers[from_stop_idx as usize].push(i as u32);
+                stop_to_transfers[from_stop.index as usize].push(i as u32);
 
                 let value = Transfer {
-                    from_stop_idx,
-                    to_stop_idx,
+                    from_stop_idx: from_stop.index,
+                    to_stop_idx: to_stop.index,
                     from_trip_idx,
                     to_trip_idx,
                     min_transfer_time: transfer.min_transfer_time.map(Duration::from_seconds),
@@ -300,7 +367,7 @@ impl Repository {
         );
     }
 
-    fn load_stop_times(&mut self, gtfs_stop_times: Vec<GtfsStopTime>, str_map: &mut StrSliceMap) {
+    fn load_stop_times(&mut self, gtfs_stop_times: Vec<GtfsStopTime>) {
         debug!("Loading stop times...");
         let now = Instant::now();
         let stop_times_map: DashMap<String, Vec<(StopTime, Option<String>)>> =
@@ -308,15 +375,16 @@ impl Repository {
         let mut trip_to_stop_times_slice: Vec<Slice> = vec![Default::default(); self.trips.len()];
         let mut stop_to_trips: Vec<Vec<u32>> = vec![Vec::new(); self.stops.len()];
 
+        let mut strings = StrSliceMap::new();
+
         gtfs_stop_times.into_par_iter().for_each(|value| {
-            let stop_idx = *self
-                .stop_lookup
-                .get(value.stop_id.as_str())
-                .expect("Failed to find stop");
+            let stop = &self
+                .stop_by_id(value.stop_id.as_str())
+                .expect("Failed to find stop by id");
             let stop_time = StopTime {
                 index: u32::MAX,
                 trip_idx: u32::MAX,
-                stop_idx,
+                stop_idx: stop.index,
                 sequence: value.stop_sequence,
                 slice: Default::default(),
                 inner_idx: u32::MAX,
@@ -337,17 +405,16 @@ impl Repository {
         let stop_times: Vec<_> = stop_times_map
             .into_iter()
             .flat_map(|(trip_id, mut stop_times)| {
-                let trip_idx = *self
-                    .trip_lookup
-                    .get(trip_id.as_str())
-                    .expect("Failed to find trip");
+                let trip = self
+                    .trip_by_id(trip_id.as_str())
+                    .expect("Failed to find trip by id");
                 let count = stop_times.len() as u32;
                 let slice = Slice {
                     start_idx: idx,
                     count,
                 };
 
-                trip_to_stop_times_slice[trip_idx as usize] = slice;
+                trip_to_stop_times_slice[trip.index as usize] = slice;
 
                 stop_times.par_sort_by_key(|s| s.0.sequence);
                 let stop_times: Vec<_> = stop_times
@@ -358,8 +425,8 @@ impl Repository {
                         s.index = idx + i;
                         s.inner_idx = i;
                         s.slice = slice;
-                        s.trip_idx = trip_idx;
-                        s.headsign = headsign.take().map(|val| str_map.get_slice(val));
+                        s.trip_idx = trip.index;
+                        s.headsign = headsign.take().map(|val| strings.get_slice(val));
                         stop_to_trips[s.stop_idx as usize].push(s.trip_idx);
                         s
                     })
@@ -369,7 +436,8 @@ impl Repository {
             })
             .collect();
 
-        self.stop_times = stop_times.into();
+        self.stop_times = stop_times.into_boxed_slice();
+        self.stop_time_strs = strings.take().into_boxed_str();
         self.trip_to_stop_times_slice = trip_to_stop_times_slice.into();
         let stop_to_trips: Box<[Box<[u32]>]> =
             stop_to_trips.into_iter().map(|val| val.into()).collect();

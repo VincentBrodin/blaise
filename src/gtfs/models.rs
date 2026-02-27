@@ -1,9 +1,6 @@
 use crate::{
-    repository::{Area, Route, Slice, Stop, StopTime},
-    shared::{
-        geo::{Coordinate, Distance},
-        time::Time,
-    },
+    repository::StopTime,
+    shared::{geo::Distance, time::Time},
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,34 +15,10 @@ pub struct GtfsStop {
     pub platform_code: Option<String>,
 }
 
-impl From<GtfsStop> for Stop {
-    fn from(value: GtfsStop) -> Self {
-        Self {
-            index: u32::MAX,
-            id: value.stop_id.into(),
-            name_slice: Slice::default(),
-            coordinate: Coordinate {
-                latitude: value.stop_lat,
-                longitude: value.stop_lon,
-            },
-            parent_index: None,
-        }
-    }
-}
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GtfsArea {
     pub area_id: String,
     pub area_name: String,
-}
-
-impl From<GtfsArea> for Area {
-    fn from(value: GtfsArea) -> Self {
-        Self {
-            index: u32::MAX,
-            id: value.area_id.into(),
-            name_slice: Default::default(),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -56,20 +29,6 @@ pub struct GtfsRoute {
     pub route_long_name: Option<String>,
     pub route_type: i32,
     pub route_desc: Option<String>,
-}
-
-impl From<GtfsRoute> for Route {
-    fn from(value: GtfsRoute) -> Self {
-        Self {
-            index: u32::MAX,
-            id: value.route_id.into(),
-            agency_id: value.agency_id.into(),
-            short_name: value.route_short_name.map(|val| val.into()),
-            long_name: value.route_long_name.map(|val| val.into()),
-            route_type: value.route_type,
-            route_desc: value.route_desc.map(|val| val.into()),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
