@@ -22,7 +22,7 @@ pub fn backtrack(
         let stop = &repository.stops[current_stop as usize];
         trace!(
             "Looking at stop: [{}] {} in round {current_round}",
-            stop.id, stop.name
+            stop.id, stop.name_slice.start_idx
         );
         if let Some(parent) = &allocator.get_parents(current_round)[current_stop as usize] {
             path.push(*parent);

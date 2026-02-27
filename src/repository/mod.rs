@@ -36,6 +36,8 @@ pub struct Repository {
     pub transfers: Box<[Transfer]>,
     /// All the shapes.
     pub shapes: Box<[Shape]>,
+    /// A big string holding all the strings in the dataset
+    pub strings: Box<str>,
 
     // --- Primary Key Lookups ---
     /// Maps a unique `Stop.id` string to its index within the `stops` slice.
@@ -86,6 +88,13 @@ impl Repository {
     }
 
     // --- Primary Key Lookups Functions ---
+
+    /// Retrieves a [`&str`] by its slice.
+    pub fn str_by_slice(&self, slice: &Slice) -> &str {
+        let start = slice.start_idx as usize;
+        let end = start + slice.count as usize;
+        &self.strings[start..end]
+    }
 
     /// Retrieves a [`Stop`] by its string identifier `Stop.id`.
     /// Returns `None` if the ID does not exist.
@@ -291,11 +300,11 @@ impl Repository {
 
     /// Performs a fuzzy text search against area names to find matches for partial user input.
     pub fn search_areas_by_name<'a>(&'a self, needle: &'a str) -> Vec<&'a Area> {
-        shared::search(needle, &self.areas)
+        shared::search(needle, &self.areas, self)
     }
 
     /// Performs a fuzzy text search against stop names (e.g., for autocomplete).
     pub fn search_stops_by_name<'a>(&'a self, needle: &'a str) -> Vec<&'a Stop> {
-        shared::search(needle, &self.stops)
+        shared::search(needle, &self.stops, self)
     }
 }

@@ -56,7 +56,7 @@ pub async fn search_stops(
             .into_iter()
             .filter(|stop| repository.stop_idx_has_trips(stop.index))
             .take(count)
-            .map(StopDto::from)
+            .map(|stop| StopDto::from(stop, repository))
             .collect();
         Ok(Json(result).into_response())
     } else {
@@ -114,7 +114,7 @@ pub async fn near_stops(
         let mut result: Vec<_> = repository
             .stops_by_coordinate(&coordinate, distance)
             .into_iter()
-            .map(StopDto::from)
+            .map(|stop| StopDto::from(stop, repository))
             .collect();
         result.sort_by(|a, b| {
             a.coordinate

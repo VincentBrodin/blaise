@@ -8,7 +8,9 @@ use crate::{
     repository::{
         Area, Cell, RaptorRoute, Repository, Route, Shape, Slice, Stop, StopTime, Transfer, Trip,
     },
-    shared::{AVERAGE_STOP_DISTANCE, Coordinate, Distance, Time, time::Duration},
+    shared::{
+        AVERAGE_STOP_DISTANCE, Coordinate, Distance, Time, time::Duration, utils::StrSliceMap,
+    },
 };
 use dashmap::DashMap;
 use rayon::prelude::*;
@@ -17,21 +19,24 @@ use tracing::debug;
 
 impl Repository {
     pub fn load_gtfs(mut self, gtfs: GtfsData) -> Self {
-        self.load_stops(gtfs.stops);
-        self.load_areas(gtfs.areas);
+        let mut str_map = StrSliceMap::new();
+
+        self.load_stops(gtfs.stops, &mut str_map);
+        self.load_areas(gtfs.areas, &mut str_map);
         self.load_area_to_stops(gtfs.stop_areas);
         let shapes_lookup = self.load_shapes(gtfs.shapes);
         self.load_routes(gtfs.routes);
         let trip_to_shape_slice = self.load_trips(gtfs.trips, shapes_lookup);
         self.load_transfers(gtfs.transfers);
-        self.load_stop_times(gtfs.stop_times);
+        self.load_stop_times(gtfs.stop_times, &mut str_map);
         self.generate_geo_hash();
         self.generate_raptor_routes(trip_to_shape_slice);
         self.generate_walks();
+        self.strings = str_map.take().into_boxed_str();
         self
     }
 
-    fn load_stops(&mut self, gtfs_stops: Vec<GtfsStop>) {
+    fn load_stops(&mut self, gtfs_stops: Vec<GtfsStop>, str_map: &mut StrSliceMap) {
         debug!("Loading stops...");
         let now = Instant::now();
         let mut stop_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_stops.len());
@@ -40,9 +45,11 @@ impl Repository {
             .into_iter()
             .enumerate()
             .for_each(|(i, mut stop)| {
+                let name_slice = str_map.get_slice(stop.stop_name.clone());
                 let parent_station = stop.parent_station.take();
                 let mut value: Stop = stop.into();
                 value.index = i as u32;
+                value.name_slice = name_slice;
                 stop_lookup.insert(value.id.clone(), i as u32);
                 stops.push((value, parent_station));
             });
@@ -78,13 +85,15 @@ impl Repository {
         );
     }
 
-    fn load_areas(&mut self, gtfs_areas: Vec<GtfsArea>) {
+    fn load_areas(&mut self, gtfs_areas: Vec<GtfsArea>, str_map: &mut StrSliceMap) {
         debug!("Loading areas...");
         let now = Instant::now();
         let mut area_lookup: HashMap<Arc<str>, u32> = HashMap::with_capacity(gtfs_areas.len());
         let mut areas: Vec<Area> = Vec::with_capacity(gtfs_areas.len());
         gtfs_areas.into_iter().enumerate().for_each(|(i, area)| {
+            let name_slice = str_map.get_slice(area.area_name.clone());
             let mut value: Area = area.into();
+            value.name_slice = name_slice;
             value.index = i as u32;
             area_lookup.insert(value.id.clone(), i as u32);
             areas.push(value);
@@ -291,15 +300,16 @@ impl Repository {
         );
     }
 
-    fn load_stop_times(&mut self, gtfs_stop_times: Vec<GtfsStopTime>) {
+    fn load_stop_times(&mut self, gtfs_stop_times: Vec<GtfsStopTime>, str_map: &mut StrSliceMap) {
         debug!("Loading stop times...");
         let now = Instant::now();
-        let stop_times_map: DashMap<String, Vec<StopTime>> =
+        let stop_times_map: DashMap<String, Vec<(StopTime, Option<String>)>> =
             DashMap::with_capacity(self.trips.len());
         let mut trip_to_stop_times_slice: Vec<Slice> = vec![Default::default(); self.trips.len()];
         let mut stop_to_trips: Vec<Vec<u32>> = vec![Vec::new(); self.stops.len()];
 
-        gtfs_stop_times.into_par_iter().for_each(|value| {
+        // FIX: Should be par
+        gtfs_stop_times.into_iter().for_each(|value| {
             let stop_idx = *self
                 .stop_lookup
                 .get(value.stop_id.as_str())
@@ -313,14 +323,14 @@ impl Repository {
                 inner_idx: u32::MAX,
                 arrival_time: Time::from_hms(&value.arrival_time).expect("Invalid time format"),
                 departure_time: Time::from_hms(&value.departure_time).expect("Invalid time format"),
-                headsign: value.stop_headsign.map(|data| data.into()),
+                headsign: Default::default(),
                 distance_traveled: value.shape_dist_traveled.map(Distance::from_meters),
             };
 
             stop_times_map
                 .entry(value.trip_id)
                 .or_default()
-                .push(stop_time);
+                .push((stop_time, value.stop_headsign));
         });
 
         let mut idx: u32 = 0;
@@ -340,16 +350,22 @@ impl Repository {
 
                 trip_to_stop_times_slice[trip_idx as usize] = slice;
 
-                stop_times.par_sort_by_key(|s| s.sequence);
-                stop_times.iter_mut().enumerate().for_each(|(i, s)| {
-                    let i = i as u32;
-                    s.index = idx + i;
-                    s.inner_idx = i;
-                    s.slice = slice;
-                    s.trip_idx = trip_idx;
+                stop_times.par_sort_by_key(|s| s.0.sequence);
+                let stop_times: Vec<_> = stop_times
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (mut s, headsign))| {
+                        let i = i as u32;
+                        s.index = idx + i;
+                        s.inner_idx = i;
+                        s.slice = slice;
+                        s.trip_idx = trip_idx;
+                        s.headsign = headsign.map(|val| str_map.get_slice(val.clone()));
 
-                    stop_to_trips[s.stop_idx as usize].push(s.trip_idx);
-                });
+                        stop_to_trips[s.stop_idx as usize].push(s.trip_idx);
+                        s
+                    })
+                    .collect();
                 idx += count;
                 stop_times
             })

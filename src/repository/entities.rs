@@ -15,10 +15,7 @@ pub struct Area {
     /// The unique external identifier.
     pub id: Arc<str>,
     /// The display name of the area.
-    pub name: Arc<str>,
-
-    /// A search-optimized version of the name (e.g., lowercase, stripped of accents).
-    pub normalized_name: Arc<str>,
+    pub name_slice: Slice,
 }
 
 impl Identifiable for Area {
@@ -26,12 +23,8 @@ impl Identifiable for Area {
         &self.id
     }
 
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn normalized_name(&self) -> &str {
-        &self.normalized_name
+    fn name_slice(&self) -> &Slice {
+        &self.name_slice
     }
 }
 
@@ -65,10 +58,9 @@ pub struct Stop {
     pub index: u32,
     /// Unique external identifier for the stop.
     pub id: Arc<str>,
-    /// Human-readable name (e.g., "Main St & 4th Ave").
-    pub name: Arc<str>,
-    /// Normalized name used for fuzzy search comparisons.
-    pub normalized_name: Arc<str>,
+    /// Slice to human-readable name (e.g., "Main St & 4th Ave").
+    pub name_slice: Slice,
+    /// Geo location of the stop
     pub coordinate: Coordinate,
     /// The index of the parent station/platform
     pub parent_index: Option<u32>,
@@ -81,12 +73,8 @@ impl Identifiable for Stop {
         &self.id
     }
 
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn normalized_name(&self) -> &str {
-        &self.normalized_name
+    fn name_slice(&self) -> &Slice {
+        &self.name_slice
     }
 }
 
@@ -126,7 +114,7 @@ pub struct StopTime {
     /// Scheduled departure time (stored as seconds since midnight).
     pub departure_time: Time,
     /// Destination shown to passengers when at this stop.
-    pub headsign: Option<Arc<str>>,
+    pub headsign: Option<Slice>,
     /// Cumulative distance traveled along the trip's shape.
     pub distance_traveled: Option<Distance>,
     // Policy for passenger boarding (Regular, No Pickup, etc.).

@@ -36,14 +36,14 @@ impl LocationDto {
                 LocationDto {
                     kind: "area".into(),
                     id: val.id.to_string(),
-                    name: val.name.to_string(),
+                    name: repository.str_by_slice(&val.name_slice).to_string(),
                     coordinate,
                 }
             }),
             Location::Stop(id) => repository.stop_by_id(&id).map(|val| LocationDto {
                 kind: "stop".into(),
                 id: val.id.to_string(),
-                name: val.name.to_string(),
+                name: repository.str_by_slice(&val.name_slice).to_string(),
                 coordinate: val.coordinate,
             }),
             Location::Coordinate(coordinate) => Some(coordinate.into()),

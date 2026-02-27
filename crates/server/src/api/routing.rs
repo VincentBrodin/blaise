@@ -87,8 +87,8 @@ pub async fn routing(
             let to = repository.stop_by_id(to_stop).unwrap();
             debug!(
                 "{leg_type} {} -> {} @ {}/{} -> {}/{}",
-                from.name,
-                to.name,
+                repository.str_by_slice(&from.name_slice),
+                repository.str_by_slice(&to.name_slice),
                 leg.scheduled_departure_time.to_hms_string(),
                 leg.actual_departure_time.to_hms_string(),
                 leg.scheduled_departure_time.to_hms_string(),
@@ -99,7 +99,7 @@ pub async fn routing(
                     let stop = repository.stop_by_id(stop_id).unwrap();
                     debug!(
                         "| {} @ {}/{} -> {}/{}",
-                        stop.name,
+                        repository.str_by_slice(&stop.name_slice),
                         leg.scheduled_departure_time.to_hms_string(),
                         leg.actual_departure_time.to_hms_string(),
                         leg.scheduled_departure_time.to_hms_string(),
@@ -114,7 +114,7 @@ pub async fn routing(
             debug!(
                 "{leg_type} {} -> {} @ {} -> {}",
                 from_coord,
-                to.name,
+                repository.str_by_slice(&to.name_slice),
                 leg.actual_departure_time.to_hms_string(),
                 leg.actual_arrival_time.to_hms_string(),
             );
@@ -124,7 +124,7 @@ pub async fn routing(
             let from = repository.stop_by_id(from_stop).unwrap();
             debug!(
                 "{leg_type} {} -> {} @ {} -> {}",
-                from.name,
+                repository.str_by_slice(&from.name_slice),
                 to_coord,
                 leg.actual_departure_time.to_hms_string(),
                 leg.actual_arrival_time.to_hms_string()
