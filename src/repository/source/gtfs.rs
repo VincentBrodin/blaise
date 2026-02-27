@@ -308,8 +308,7 @@ impl Repository {
         let mut trip_to_stop_times_slice: Vec<Slice> = vec![Default::default(); self.trips.len()];
         let mut stop_to_trips: Vec<Vec<u32>> = vec![Vec::new(); self.stops.len()];
 
-        // FIX: Should be par
-        gtfs_stop_times.into_iter().for_each(|value| {
+        gtfs_stop_times.into_par_iter().for_each(|value| {
             let stop_idx = *self
                 .stop_lookup
                 .get(value.stop_id.as_str())
@@ -354,14 +353,13 @@ impl Repository {
                 let stop_times: Vec<_> = stop_times
                     .into_iter()
                     .enumerate()
-                    .map(|(i, (mut s, headsign))| {
+                    .map(|(i, (mut s, mut headsign))| {
                         let i = i as u32;
                         s.index = idx + i;
                         s.inner_idx = i;
                         s.slice = slice;
                         s.trip_idx = trip_idx;
-                        s.headsign = headsign.map(|val| str_map.get_slice(val.clone()));
-
+                        s.headsign = headsign.take().map(|val| str_map.get_slice(val));
                         stop_to_trips[s.stop_idx as usize].push(s.trip_idx);
                         s
                     })
