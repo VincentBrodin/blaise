@@ -1,4 +1,5 @@
 **/target
 *.zip
+*.gtfs
 crates/server/sweden
 .direnv/

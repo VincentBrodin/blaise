@@ -15,29 +15,9 @@ keywords = [
   "public-transport",
 ]
 
-
-[[bench]]
-name = "blaise"
-harness = false
-
-[workspace]
-members = ["crates/server"]
-resolver = "1"
-
-[workspace.dependencies]
-blaise = { path = "." }
-
-[features]
-
 [dependencies]
-bitvec = "1.0.1"
-chrono = "0.4.42"
-csv = "1.4.0"
+gtfs-bin = "0.1.1"
+memmap2 = "0.9.10"
 rayon = "1.11.0"
-serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 tracing = "0.1.44"
-zip = "7.2.0"
-
-[dev-dependencies]
-criterion = "0.8.1"
