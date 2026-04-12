@@ -4,7 +4,6 @@ use gtfs_bin::{
     consumer::Consumer,
     models::{Opt, Sentinel, StopIdx, Time, TripIdx},
 };
-use rayon::iter::ParallelExtend;
 
 use crate::{
     raptor::{
@@ -182,7 +181,7 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
             });
     }
 
-    if let Some(stop) = state.target_best_stop.get()
+    if let Some(_) = state.target_best_stop.get()
         && let Some(round) = state.target_best_round
     {
         println!("Found route in {round} round(s)");

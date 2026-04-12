@@ -2,7 +2,6 @@ use gtfs_bin::{
     consumer::Consumer,
     models::{Opt, Sentinel, StopIdx, Time},
 };
-use rayon::iter::{ParallelExtend, ParallelIterator};
 
 use crate::raptor::{MAX_ROUNDS, Parent, SequnceIdx, Update};
 
