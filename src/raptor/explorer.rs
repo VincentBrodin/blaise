@@ -1,13 +1,13 @@
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Coordinate, Duration, Opt, Sentinel, StopIdx, Time, TripIdx, TripPatternIdx},
+    models::{Duration, Opt, Sentinel, StopIdx, Time, TripIdx, TripPatternIdx},
 };
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
 
 use crate::{
-    raptor::{Parent, SequnceIdx, Update, state::State},
+    raptor::{Parent, SequnceIdx, Update, state::State, time_to_walk},
     spatial::SpatialHash,
 };
 
@@ -189,19 +189,4 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
         })
         .flatten();
     state.update_buffer.par_extend(updates);
-}
-
-pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
-    const R: f64 = 6371.0;
-    let dist_lat = f64::to_radians(coordinate_a.lat_f64() - coordinate_b.lat_f64());
-    let dist_lon = f64::to_radians(coordinate_a.lon_f64() - coordinate_b.lon_f64());
-    let a = f64::powi(f64::sin(dist_lat / 2.0), 2)
-        + f64::cos(f64::to_radians(coordinate_b.lat_f64()))
-            * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
-            * f64::sin(dist_lon / 2.0)
-            * f64::sin(dist_lon / 2.0);
-    let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
-    let distance = R * c * 1000.0;
-    let duration = (distance / 1.5).ceil() as u32;
-    Duration(duration)
 }

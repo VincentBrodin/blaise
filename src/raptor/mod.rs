@@ -2,7 +2,7 @@ use std::mem;
 
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Opt, Sentinel, StopIdx, Time, TripIdx},
+    models::{Coordinate, Duration, Opt, Sentinel, StopIdx, Time, TripIdx},
 };
 
 use crate::{
@@ -76,9 +76,18 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .for_each(|stop_idx| {
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .get()
+                            .map(|coordinate| (stop_idx, coordinate))
+                    })
+                    .for_each(|(stop_idx, to_coordinate)| {
+                        let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] = Opt::new(time);
+                        state.current_labels[stop_idx.as_usize()] =
+                            Opt::new(Time(time.0 + time_to_walk.0));
                     }),
             };
         }
@@ -91,9 +100,18 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .for_each(|stop_idx| {
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .get()
+                            .map(|coordinate| (stop_idx, coordinate))
+                    })
+                    .for_each(|(stop_idx, to_coordinate)| {
+                        let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] = Opt::new(time);
+                        state.current_labels[stop_idx.as_usize()] =
+                            Opt::new(Time(time.0 + time_to_walk.0));
                     }),
             };
         }
@@ -188,4 +206,19 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
     } else {
         println!("Failed to find route");
     }
+}
+
+pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
+    const R: f64 = 6371.0;
+    let dist_lat = f64::to_radians(coordinate_a.lat_f64() - coordinate_b.lat_f64());
+    let dist_lon = f64::to_radians(coordinate_a.lon_f64() - coordinate_b.lon_f64());
+    let a = f64::powi(f64::sin(dist_lat / 2.0), 2)
+        + f64::cos(f64::to_radians(coordinate_b.lat_f64()))
+            * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
+            * f64::sin(dist_lon / 2.0)
+            * f64::sin(dist_lon / 2.0);
+    let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
+    let distance = R * c * 1000.0;
+    let duration = (distance / 1.5).ceil() as u32;
+    Duration(duration)
 }
