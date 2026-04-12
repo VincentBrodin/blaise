@@ -372,9 +372,9 @@ dependencies = [
 
 [[package]]
 name = "gtfs-bin"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd6e2238681037cce6fd73a1cf968ae62a1a07f8066175beeec99f290c7d3049"
+checksum = "29438f028286683861a16dd81c1dc1eea2f786ae9e4ea138f11ab56d9332d3d6"
 dependencies = [
  "bitvec",
  "bytemuck",

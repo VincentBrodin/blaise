@@ -16,7 +16,7 @@ keywords = [
 ]
 
 [dependencies]
-gtfs-bin = "0.1.1"
+gtfs-bin = "0.1.2"
 memmap2 = "0.9.10"
 rayon = "1.11.0"
 thiserror = "2.0.17"

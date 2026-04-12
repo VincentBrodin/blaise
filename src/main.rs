@@ -1,4 +1,4 @@
-use std::{env, fs::File, time::Instant};
+use std::{env, fs::File};
 
 use blaise::{
     raptor::{query::RaptorQuery, solve},
