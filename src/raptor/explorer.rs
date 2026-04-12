@@ -1,12 +1,15 @@
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Duration, Opt, Sentinel, StopIdx, Time, TripIdx, TripPatternIdx},
+    models::{Coordinate, Duration, Opt, Sentinel, StopIdx, Time, TripIdx, TripPatternIdx},
 };
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
 
-use crate::raptor::{Parent, SequnceIdx, Update, state::State};
+use crate::{
+    raptor::{Parent, SequnceIdx, Update, state::State},
+    spatial::SpatialHash,
+};
 
 pub fn get_arrival_time(consumer: &Consumer, trip_idx: TripIdx, p_idx: SequnceIdx) -> Opt<Time> {
     let stop_times = consumer.stop_times_by_trip(trip_idx);
@@ -107,7 +110,7 @@ pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
     state.update_buffer.par_extend(updates);
 }
 
-pub fn explore_transfers(consumer: &Consumer, state: &mut State) {
+pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
     let updates = state
         .marked_stops
         .par_iter()
@@ -149,9 +152,56 @@ pub fn explore_transfers(consumer: &Consumer, state: &mut State) {
                         ));
                     }
                 });
+            if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
+                spatial
+                    .get_in_radius_iter(coordinate, 500.0)
+                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .get()
+                            .map(|coordinate| (stop_idx, coordinate))
+                    })
+                    .for_each(|(to_stop, to_coordinate)| {
+                        let tau_star = state.tau_star[to_stop.as_usize()]
+                            .get()
+                            .unwrap_or(Time(u32::MAX));
 
+                        let departure_time = state.current_labels[stop_idx.as_usize()]
+                            .get()
+                            .unwrap_or(Time(u32::MAX));
+                        let arrival_time =
+                            Time(departure_time.0 + time_to_walk(coordinate, to_coordinate).0);
+
+                        if arrival_time < tau_star && arrival_time < target_tau_star {
+                            updates.push(Update::new(
+                                to_stop,
+                                arrival_time,
+                                Parent::Transfer {
+                                    from_stop: stop_idx,
+                                },
+                            ));
+                        }
+                    });
+            }
             updates
         })
         .flatten();
     state.update_buffer.par_extend(updates);
+}
+
+pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
+    const R: f64 = 6371.0;
+    let dist_lat = f64::to_radians(coordinate_a.lat_f64() - coordinate_b.lat_f64());
+    let dist_lon = f64::to_radians(coordinate_a.lon_f64() - coordinate_b.lon_f64());
+    let a = f64::powi(f64::sin(dist_lat / 2.0), 2)
+        + f64::cos(f64::to_radians(coordinate_b.lat_f64()))
+            * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
+            * f64::sin(dist_lon / 2.0)
+            * f64::sin(dist_lon / 2.0);
+    let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
+    let distance = R * c * 1000.0;
+    let duration = (distance / 1.5).ceil() as u32;
+    Duration(duration)
 }

@@ -100,10 +100,11 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
         }
     }
 
-    for round in (0..MAX_ROUNDS) {
+    for round in 0..MAX_ROUNDS {
         mem::swap(&mut state.current_labels, &mut state.previous_labels);
-        state.active_trip_patterns.fill(Opt::new(SequnceIdx::NONE));
+        state.current_labels.fill(Opt::new(Time::NONE));
 
+        state.active_trip_patterns.fill(Opt::new(SequnceIdx::NONE));
         for marked_stop in state
             .marked_stops
             .iter()
@@ -121,7 +122,7 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                     match query.time_direction {
                         query::TimeDirection::Arrival(_) => {
                             if let Some(active_p_idx) = active_p_idx.get()
-                                && p_idx < active_p_idx
+                                && p_idx > active_p_idx
                             {
                                 state.active_trip_patterns[trip_pattern.idx.as_usize()] =
                                     Opt::new(p_idx);
@@ -132,7 +133,7 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                         }
                         query::TimeDirection::Departure(_) => {
                             if let Some(active_p_idx) = active_p_idx.get()
-                                && p_idx > active_p_idx
+                                && p_idx < active_p_idx
                             {
                                 state.active_trip_patterns[trip_pattern.idx.as_usize()] =
                                     Opt::new(p_idx);
@@ -153,7 +154,7 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                 explore_trip_patterns(consumer, &mut state);
                 state.apply_updates(round);
 
-                explore_transfers(consumer, &mut state);
+                explore_transfers(consumer, spatial, &mut state);
                 state.apply_updates(round);
             }
         }
