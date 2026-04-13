@@ -42,6 +42,25 @@ fn find_earliest_trip(
         .into()
 }
 
+fn find_latest_trip(
+    consumer: &Consumer,
+    trip_pattern: TripPatternIdx,
+    p_idx: SequnceIdx,
+    ready_time: Time,
+) -> Opt<TripIdx> {
+    consumer
+        .iter_trips_in_trip_pattern(trip_pattern)
+        .filter_map(|trip| {
+            get_arrival_time(consumer, trip.idx, p_idx)
+                .get()
+                .map(|arrival_time| (trip.idx, arrival_time))
+        })
+        .filter(|&(_, arrival_time)| arrival_time <= ready_time)
+        .max_by_key(|&(_, arrival_time)| arrival_time)
+        .map(|(trip_idx, _)| trip_idx)
+        .into()
+}
+
 pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
     let updates = state
         .active_trip_patterns
@@ -102,6 +121,74 @@ pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
                 {
                     active_trip = Opt::new(earlier_trip);
                     boarding_p = Opt::new(i);
+                }
+            }
+            updates
+        })
+        .flatten();
+    state.update_buffer.par_extend(updates);
+}
+
+pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
+    let updates = state
+        .active_trip_patterns
+        .par_iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(i, p_idx)| p_idx.get().map(|p_idx| (i, p_idx)))
+        .map(|(trip_pattern_idx, p_idx)| {
+            let mut updates: Vec<Update> = Vec::with_capacity(32);
+            let trip_pattern_idx = TripPatternIdx(trip_pattern_idx as u32);
+            let trip_pattern = consumer.trip_pattern(trip_pattern_idx);
+
+            let mut active_trip = Opt::new(TripIdx::NONE);
+
+            let stops: Vec<_> = consumer
+                .iter_stop_sequence_by_trip_pattern(trip_pattern_idx)
+                .enumerate()
+                .take(p_idx.as_usize() + 1)
+                .map(|(i, stop)| (SequnceIdx(i as u32), stop))
+                .collect();
+
+            for (i, stop) in stops.into_iter().rev() {
+                let tau_star = state.tau_star[stop.idx.as_usize()]
+                    .get()
+                    .unwrap_or(Time(u32::MIN));
+                let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MIN));
+
+                // PART A
+                if let Some(trip) = active_trip.get()
+                    && let departure_time = get_departure_time(consumer, trip, i)
+                        .get()
+                        .unwrap_or(Time(u32::MIN))
+                    && departure_time > tau_star
+                    && departure_time > target_tau_star
+                {
+                    updates.push(Update::new(
+                        stop.idx,
+                        departure_time,
+                        Parent::Transit {
+                            boarding_p_idx: i,
+                            trip,
+                        },
+                    ));
+                }
+
+                // PART B
+                let previous_label = state.previous_labels[stop.idx.as_usize()]
+                    .get()
+                    .unwrap_or(Time(u32::MIN));
+
+                let arrival_time = active_trip
+                    .get()
+                    .and_then(|active_trip| get_arrival_time(consumer, active_trip, i).get())
+                    .unwrap_or(Time(u32::MIN));
+
+                if previous_label >= arrival_time
+                    && let Some(latest_trip) =
+                        find_latest_trip(consumer, trip_pattern.idx, i, previous_label).get()
+                {
+                    active_trip = Opt::new(latest_trip);
                 }
             }
             updates
@@ -182,6 +269,79 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
                                     from_stop: stop_idx,
                                 },
                             ));
+                        }
+                    });
+            }
+            updates
+        })
+        .flatten();
+    state.update_buffer.par_extend(updates);
+}
+
+pub fn explore_transfers_reverse(consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
+    let updates = state
+        .marked_stops
+        .par_iter()
+        .copied()
+        .enumerate()
+        .filter(|&(_, marked)| marked)
+        .map(|(stop_idx, _)| {
+            let mut updates: Vec<Update> = Vec::with_capacity(32);
+            let stop_idx = StopIdx(stop_idx as u32);
+            let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MIN));
+            let arrival_time = state.current_labels[stop_idx.as_usize()]
+                .get()
+                .unwrap_or(Time(u32::MIN));
+
+            consumer
+                .iter_inbound_transfers_by_stop(stop_idx)
+                .for_each(|transfer| {
+                    let tau_star = state.tau_star[transfer.to_stop_idx.as_usize()]
+                        .get()
+                        .unwrap_or(Time(u32::MIN));
+                    let transfer_time = transfer
+                        .min_transfer_time
+                        .get()
+                        .unwrap_or(Duration(u32::MIN))
+                        .0;
+
+                    if arrival_time.0 >= transfer_time {
+                        let departure_time = Time(arrival_time.0 - transfer_time);
+                        if departure_time > tau_star && departure_time > target_tau_star {
+                            updates.push(Update::new(
+                                transfer.to_stop_idx,
+                                departure_time,
+                                Parent::Transfer {
+                                    from_stop: stop_idx,
+                                },
+                            ));
+                        }
+                    }
+                });
+
+            // Spatial walking logic
+            if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
+                spatial
+                    .get_in_radius_iter(coordinate, 500.0)
+                    .filter(|s| consumer.iter_trips_by_stop(*s).count() != 0)
+                    .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
+                    .for_each(|(other_stop, other_coordinate)| {
+                        let tau_star = state.tau_star[other_stop.as_usize()]
+                            .get()
+                            .unwrap_or(Time(u32::MIN));
+                        let walk_time = super::time_to_walk(coordinate, other_coordinate).0;
+
+                        if arrival_time.0 >= walk_time {
+                            let departure_time = Time(arrival_time.0 - walk_time);
+                            if departure_time > tau_star && departure_time > target_tau_star {
+                                updates.push(Update::new(
+                                    other_stop,
+                                    departure_time,
+                                    Parent::Transfer {
+                                        from_stop: stop_idx,
+                                    },
+                                ));
+                            }
                         }
                     });
             }

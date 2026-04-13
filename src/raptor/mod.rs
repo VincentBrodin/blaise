@@ -7,7 +7,10 @@ use gtfs_bin::{
 
 use crate::{
     raptor::{
-        explorer::{explore_transfers, explore_trip_patterns},
+        explorer::{
+            explore_transfers, explore_transfers_reverse, explore_trip_patterns,
+            explore_trip_patterns_reverse,
+        },
         query::{Location, RaptorQuery},
         state::State,
     },
@@ -196,13 +199,19 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
         state.marked_stops.fill(false);
 
         match query.time_direction {
-            query::TimeDirection::Arrival(_) => todo!(),
+            query::TimeDirection::Arrival(_) => {
+                explore_trip_patterns_reverse(consumer, &mut state);
+                state.apply_updates(round, query.time_direction);
+
+                explore_transfers_reverse(consumer, spatial, &mut state);
+                state.apply_updates(round, query.time_direction);
+            }
             query::TimeDirection::Departure(_) => {
                 explore_trip_patterns(consumer, &mut state);
-                state.apply_updates(round);
+                state.apply_updates(round, query.time_direction);
 
                 explore_transfers(consumer, spatial, &mut state);
-                state.apply_updates(round);
+                state.apply_updates(round, query.time_direction);
             }
         }
 

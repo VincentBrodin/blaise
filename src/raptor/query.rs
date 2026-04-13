@@ -19,6 +19,7 @@ impl From<StopIdx> for Location {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum TimeDirection {
     Arrival(Time),
     Departure(Time),

@@ -3,7 +3,7 @@ use gtfs_bin::{
     models::{Opt, Sentinel, StopIdx, Time},
 };
 
-use crate::raptor::{MAX_ROUNDS, Parent, SequnceIdx, Update};
+use crate::raptor::{MAX_ROUNDS, Parent, SequnceIdx, Update, query::TimeDirection};
 
 pub struct State {
     pub tau_star: Vec<Opt<Time>>,
@@ -42,15 +42,33 @@ impl State {
         }
     }
 
-    pub fn apply_updates(&mut self, round: usize) {
-        let target_tau_star = self.target_tau_star.get().unwrap_or(Time(u32::MAX));
+    pub fn apply_updates(&mut self, round: usize, time_direction: TimeDirection) {
+        let is_arrival = match time_direction {
+            TimeDirection::Arrival(_) => true,
+            TimeDirection::Departure(_) => false,
+        };
+        let target_tau_star = self.target_tau_star.get().unwrap_or(if is_arrival {
+            Time(u32::MIN)
+        } else {
+            Time(u32::MAX)
+        });
 
         for update in self.update_buffer.iter() {
             let tau_star = self.tau_star[update.stop.as_usize()]
                 .get()
-                .unwrap_or(Time(u32::MAX));
+                .unwrap_or(if is_arrival {
+                    Time(u32::MIN)
+                } else {
+                    Time(u32::MAX)
+                });
 
-            if update.arrival_time < tau_star && update.arrival_time < target_tau_star {
+            let improved = if is_arrival {
+                update.arrival_time > tau_star && update.arrival_time > target_tau_star
+            } else {
+                update.arrival_time < tau_star && update.arrival_time < target_tau_star
+            };
+
+            if improved {
                 self.current_labels[update.stop.as_usize()] = Opt::new(update.arrival_time);
                 self.tau_star[update.stop.as_usize()] = Opt::new(update.arrival_time);
                 let parent_idx = self.calc_parent_idx(round, update.stop);
