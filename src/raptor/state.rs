@@ -52,6 +52,7 @@ impl State {
 
             if update.arrival_time < tau_star && update.arrival_time < target_tau_star {
                 self.current_labels[update.stop.as_usize()] = Opt::new(update.arrival_time);
+                self.tau_star[update.stop.as_usize()] = Opt::new(update.arrival_time);
                 let parent_idx = self.calc_parent_idx(round, update.stop);
                 self.parents[parent_idx] = Some(update.parent);
                 self.marked_stops[update.stop.as_usize()] = true;

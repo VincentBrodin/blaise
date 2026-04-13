@@ -90,6 +90,18 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                             Opt::new(Time(time.0 + time_to_walk.0));
                     }),
             };
+
+            match query.origin {
+                Location::Stop(stop_idx) => {
+                    state.target_stops.push(stop_idx);
+                }
+                Location::Coordinate(coordinate) => spatial
+                    .get_in_radius_iter(coordinate, query.search_radius)
+                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
+                    .for_each(|stop_idx| {
+                        state.target_stops.push(stop_idx);
+                    }),
+            }
         }
         query::TimeDirection::Departure(time) => {
             match query.origin {
@@ -114,14 +126,32 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
                             Opt::new(Time(time.0 + time_to_walk.0));
                     }),
             };
+
+            match query.destination {
+                Location::Stop(stop_idx) => {
+                    state.target_stops.push(stop_idx);
+                }
+                Location::Coordinate(coordinate) => spatial
+                    .get_in_radius_iter(coordinate, query.search_radius)
+                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
+                    .for_each(|stop_idx| {
+                        state.target_stops.push(stop_idx);
+                    }),
+            }
         }
     }
 
     for round in 0..MAX_ROUNDS {
+        if !state.marked_stops.iter().any(|&marked| marked) {
+            break;
+        }
+
         mem::swap(&mut state.current_labels, &mut state.previous_labels);
         state.current_labels.fill(Opt::new(Time::NONE));
 
-        state.active_trip_patterns.fill(Opt::new(SequnceIdx::NONE));
+        state
+            .active_trip_patterns
+            .fill(Opt::new(SequnceIdx(u32::MAX)));
         for marked_stop in state
             .marked_stops
             .iter()

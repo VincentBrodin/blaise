@@ -1,4 +1,4 @@
-use std::{env, fs::File};
+use std::{env, fs::File, time::Instant};
 
 use blaise::{
     raptor::{query::RaptorQuery, solve},
@@ -22,8 +22,10 @@ pub fn main() {
 
     let query = RaptorQuery::new(
         Coordinate::new(59.5832, 17.8807).into(),
-        Coordinate::new(59.3404, 18.0381).into(),
+        Coordinate::new(57.6900, 11.9730).into(),
     );
 
+    let now = Instant::now();
     solve(query, &consumer, &spatial_hash);
+    println!("Solvig route query took {:?}", now.elapsed());
 }
