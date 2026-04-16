@@ -66,12 +66,7 @@ impl Update {
 
 const MAX_ROUNDS: usize = 15;
 
-pub fn solve(
-    query: RaptorQuery,
-    consumer: &Consumer,
-    spatial: &SpatialHash,
-    mut state: &mut State,
-) {
+pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             match query.destination {
@@ -203,17 +198,17 @@ pub fn solve(
 
         match query.time_direction {
             query::TimeDirection::Arrival(_) => {
-                explore_trip_patterns_reverse(consumer, &mut state);
+                explore_trip_patterns_reverse(consumer, state);
                 state.apply_updates(round, query.time_direction);
 
-                explore_transfers_reverse(consumer, spatial, &mut state);
+                explore_transfers_reverse(consumer, spatial, state);
                 state.apply_updates(round, query.time_direction);
             }
             query::TimeDirection::Departure(_) => {
-                explore_trip_patterns(consumer, &mut state);
+                explore_trip_patterns(consumer, state);
                 state.apply_updates(round, query.time_direction);
 
-                explore_transfers(consumer, spatial, &mut state);
+                explore_transfers(consumer, spatial, state);
                 state.apply_updates(round, query.time_direction);
             }
         }
