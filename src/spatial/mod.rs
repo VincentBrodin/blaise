@@ -119,7 +119,7 @@ impl SpatialHash {
 
     #[inline]
     fn pack_key(x: i32, y: i32) -> u64 {
-        ((x as u64) << 32) | (y as u64)
+        ((x as u32 as u64) << 32) | (y as u32 as u64)
     }
 
     #[inline]

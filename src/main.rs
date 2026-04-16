@@ -1,7 +1,7 @@
 use std::{env, fs::File, time::Instant};
 
 use blaise::{
-    raptor::{query::RaptorQuery, solve},
+    raptor::{query::RaptorQuery, solve, state::State},
     spatial::SpatialHash,
 };
 use gtfs_bin::{consumer::Consumer, models::Coordinate};
@@ -25,7 +25,8 @@ pub fn main() {
         Coordinate::new(57.6900, 11.9730).into(),
     );
 
+    let mut state = State::new(&consumer);
     let now = Instant::now();
-    solve(query, &consumer, &spatial_hash);
+    solve(query, &consumer, &spatial_hash, &mut state);
     println!("Solvig route query took {:?}", now.elapsed());
 }

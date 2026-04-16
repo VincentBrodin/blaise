@@ -19,7 +19,7 @@ use crate::{
 
 mod explorer;
 pub mod query;
-mod state;
+pub mod state;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -66,9 +66,12 @@ impl Update {
 
 const MAX_ROUNDS: usize = 15;
 
-pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash) {
-    let mut state = State::new(consumer);
-
+pub fn solve(
+    query: RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialHash,
+    mut state: &mut State,
+) {
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             match query.destination {
