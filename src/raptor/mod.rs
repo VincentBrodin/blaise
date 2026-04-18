@@ -74,7 +74,7 @@ pub fn solve(
     consumer: &Consumer,
     spatial: &SpatialHash,
     state: &mut State,
-) -> Result<Itinerary, ()> {
+) -> Result<Itinerary, crate::Error> {
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             match query.destination {
@@ -221,27 +221,6 @@ pub fn solve(
             }
         }
 
-        // let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MAX));
-        // state
-        //     .target_stops
-        //     .iter()
-        //     .filter_map(|target_stop| {
-        //         state.tau_star[target_stop.as_usize()]
-        //             .get()
-        //             .map(|tau_star| (target_stop, tau_star))
-        //     })
-        //     .for_each(|(target_stop, tau_star)| {
-        //         let improvement = match query.time_direction {
-        //             query::TimeDirection::Arrival(_) => tau_star > target_tau_star,
-        //             query::TimeDirection::Departure(_) => tau_star < target_tau_star,
-        //         };
-
-        //         if target_tau_star.is_none() || improvement {
-        //             state.target_tau_star = Opt::new(tau_star);
-        //             state.target_best_stop = Opt::new(*target_stop);
-        //             state.target_best_round = Some(round);
-        //         }
-        //     });
         for target_stop in state.target_stops.iter() {
             if let Some(arrival_time) = state.current_labels[target_stop.as_usize()].get() {
                 let current_best = state.target_tau_star.get();

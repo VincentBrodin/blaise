@@ -63,11 +63,11 @@ pub struct Itinerary {
 
 impl Itinerary {
     pub(crate) fn new(
-        query: &RaptorQuery,
+        _query: &RaptorQuery,
         state: &State,
         consumer: &Consumer,
-        realtime: &Realtime,
-    ) -> Result<Self, ()> {
+        _realtime: &Realtime,
+    ) -> Result<Self, crate::Error> {
         if let Some(best_stop) = state.target_best_stop.get()
             && let Some(best_round) = state.target_best_round
         {
@@ -170,7 +170,7 @@ impl Itinerary {
                 legs,
             })
         } else {
-            Err(())
+            Err(crate::Error::NoRoute)
         }
     }
 }
