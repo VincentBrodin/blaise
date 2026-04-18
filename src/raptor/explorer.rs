@@ -99,7 +99,7 @@ pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
                         stop.idx,
                         arrival_time,
                         Parent::Transit {
-                            boarding_p_idx: boarding_p.get().unwrap_or(SequnceIdx::NONE),
+                            boarding_p: boarding_p.get().unwrap_or(SequnceIdx::NONE),
                             trip,
                         },
                     ));
@@ -168,7 +168,7 @@ pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
                         stop.idx,
                         departure_time,
                         Parent::Transit {
-                            boarding_p_idx: i,
+                            boarding_p: i,
                             trip,
                         },
                     ));

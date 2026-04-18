@@ -3,6 +3,7 @@ use std::mem;
 use gtfs_bin::{
     consumer::Consumer,
     models::{Coordinate, Duration, Opt, Sentinel, StopIdx, Time, TripIdx},
+    rt::RealtimeBuilder,
 };
 
 use crate::{
@@ -11,6 +12,7 @@ use crate::{
             explore_transfers, explore_transfers_reverse, explore_trip_patterns,
             explore_trip_patterns_reverse,
         },
+        itinerary::Itinerary,
         query::{Location, RaptorQuery},
         state::State,
     },
@@ -18,6 +20,7 @@ use crate::{
 };
 
 mod explorer;
+pub mod itinerary;
 pub mod query;
 pub mod state;
 
@@ -37,7 +40,7 @@ impl SequnceIdx {
 #[derive(Debug, Clone, Copy)]
 pub enum Parent {
     Transit {
-        boarding_p_idx: SequnceIdx,
+        boarding_p: SequnceIdx,
         trip: TripIdx,
     },
 
@@ -66,7 +69,12 @@ impl Update {
 
 const MAX_ROUNDS: usize = 15;
 
-pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
+pub fn solve(
+    query: RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialHash,
+    state: &mut State,
+) -> Result<Itinerary, ()> {
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             match query.destination {
@@ -213,36 +221,50 @@ pub fn solve(query: RaptorQuery, consumer: &Consumer, spatial: &SpatialHash, sta
             }
         }
 
-        let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MAX));
-        state
-            .target_stops
-            .iter()
-            .filter_map(|target_stop| {
-                state.tau_star[target_stop.as_usize()]
-                    .get()
-                    .map(|tau_star| (target_stop, tau_star))
-            })
-            .for_each(|(target_stop, tau_star)| {
-                let improvement = match query.time_direction {
-                    query::TimeDirection::Arrival(_) => tau_star > target_tau_star,
-                    query::TimeDirection::Departure(_) => tau_star < target_tau_star,
+        // let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MAX));
+        // state
+        //     .target_stops
+        //     .iter()
+        //     .filter_map(|target_stop| {
+        //         state.tau_star[target_stop.as_usize()]
+        //             .get()
+        //             .map(|tau_star| (target_stop, tau_star))
+        //     })
+        //     .for_each(|(target_stop, tau_star)| {
+        //         let improvement = match query.time_direction {
+        //             query::TimeDirection::Arrival(_) => tau_star > target_tau_star,
+        //             query::TimeDirection::Departure(_) => tau_star < target_tau_star,
+        //         };
+
+        //         if target_tau_star.is_none() || improvement {
+        //             state.target_tau_star = Opt::new(tau_star);
+        //             state.target_best_stop = Opt::new(*target_stop);
+        //             state.target_best_round = Some(round);
+        //         }
+        //     });
+        for target_stop in state.target_stops.iter() {
+            if let Some(arrival_time) = state.current_labels[target_stop.as_usize()].get() {
+                let current_best = state.target_tau_star.get();
+
+                let improvement = match current_best {
+                    None => true,
+                    Some(best) => match query.time_direction {
+                        query::TimeDirection::Arrival(_) => arrival_time > best,
+                        query::TimeDirection::Departure(_) => arrival_time < best,
+                    },
                 };
 
-                if target_tau_star.is_none() || improvement {
-                    state.target_tau_star = Opt::new(tau_star);
+                if improvement {
+                    state.target_tau_star = Opt::new(arrival_time);
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
                 }
-            });
+            }
+        }
     }
 
-    if let Some(_) = state.target_best_stop.get()
-        && let Some(round) = state.target_best_round
-    {
-        println!("Found route in {round} round(s)");
-    } else {
-        println!("Failed to find route");
-    }
+    let realtime = RealtimeBuilder::new(consumer).build(vec![].into_iter());
+    Itinerary::new(&query, state, consumer, &realtime)
 }
 
 pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {

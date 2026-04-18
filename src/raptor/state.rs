@@ -18,7 +18,7 @@ pub struct State {
     pub target_best_round: Option<usize>,
 
     pub update_buffer: Vec<Update>,
-    parents: Vec<Option<Parent>>,
+    pub parents: Vec<Option<Parent>>,
 
     stop_count: usize,
 }
