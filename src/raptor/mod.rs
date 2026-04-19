@@ -115,6 +115,7 @@ pub fn solve(
             destination: query.destination,
             time_direction: query::TimeDirection::Departure(optimal_departure),
             search_radius: query.search_radius,
+            date: query.date,
         };
 
         state.reset();
@@ -311,14 +312,14 @@ fn solve_core(
 
         match query.time_direction {
             query::TimeDirection::Arrival(_) => {
-                explore_trip_patterns_reverse(consumer, state);
+                explore_trip_patterns_reverse(query, consumer, state);
                 state.apply_updates(round, query.time_direction);
 
                 explore_transfers_reverse(query, consumer, spatial, state);
                 state.apply_updates(round, query.time_direction);
             }
             query::TimeDirection::Departure(_) => {
-                explore_trip_patterns(consumer, state);
+                explore_trip_patterns(query, consumer, state);
                 state.apply_updates(round, query.time_direction);
 
                 explore_transfers(query, consumer, spatial, state);
@@ -366,8 +367,6 @@ pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Durat
     let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
     let euclidean_distance = R * c * 1000.0;
 
-    // Apply a circuity factor of 1.3 to approximate city street network distance
-    // rather than "as the crow flies" distance.
     let network_distance = euclidean_distance * 1.3;
 
     let duration = (network_distance / 1.2).ceil() as u32;

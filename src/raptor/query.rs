@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gtfs_bin::models::{Coordinate, StopIdx, Time};
+use gtfs_bin::models::{Coordinate, Date, StopIdx, Time};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Location {
@@ -31,6 +31,7 @@ pub struct RaptorQuery {
     pub destination: Location,
     pub time_direction: TimeDirection,
     pub search_radius: f64,
+    pub date: Date,
 }
 
 impl RaptorQuery {
@@ -46,6 +47,7 @@ impl RaptorQuery {
             destination,
             time_direction: TimeDirection::Departure(duration_since_midnight),
             search_radius: 1500.0,
+            date: Date((duration_since_epoch.as_secs() / 86_400) as u32),
         }
     }
 
@@ -55,6 +57,11 @@ impl RaptorQuery {
     }
     pub fn with_departure(mut self, departure: Time) -> Self {
         self.time_direction = TimeDirection::Departure(departure);
+        self
+    }
+    
+    pub fn with_date(mut self, date: Date) -> Self {
+        self.date = date;
         self
     }
 }

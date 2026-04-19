@@ -27,12 +27,14 @@ pub fn get_departure_time(consumer: &Consumer, trip_idx: TripIdx, p_idx: Sequnce
 
 fn find_earliest_trip(
     consumer: &Consumer,
+    query: &RaptorQuery,
     trip_pattern: TripPatternIdx,
     p_idx: SequnceIdx,
     ready_time: Time,
 ) -> Opt<TripIdx> {
     consumer
         .iter_trips_in_trip_pattern(trip_pattern)
+        .filter(|trip| consumer.is_service_active(trip.service_idx, query.date))
         .filter_map(|trip| {
             get_departure_time(consumer, trip.idx, p_idx)
                 .get()
@@ -46,12 +48,14 @@ fn find_earliest_trip(
 
 fn find_latest_trip(
     consumer: &Consumer,
+    query: &RaptorQuery,
     trip_pattern: TripPatternIdx,
     p_idx: SequnceIdx,
     ready_time: Time,
 ) -> Opt<TripIdx> {
     consumer
         .iter_trips_in_trip_pattern(trip_pattern)
+        .filter(|trip| consumer.is_service_active(trip.service_idx, query.date))
         .filter_map(|trip| {
             get_arrival_time(consumer, trip.idx, p_idx)
                 .get()
@@ -63,7 +67,7 @@ fn find_latest_trip(
         .into()
 }
 
-pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
+pub fn explore_trip_patterns(query: &RaptorQuery, consumer: &Consumer, state: &mut State) {
     let updates = state
         .active_trip_patterns
         .par_iter()
@@ -127,7 +131,7 @@ pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
 
                 if previous_label < departure_time
                     && let Some(earlier_trip) =
-                        find_earliest_trip(consumer, trip_pattern.idx, i, previous_label).get()
+                        find_earliest_trip(consumer, query, trip_pattern.idx, i, previous_label).get()
                 {
                     let earlier_departure = get_departure_time(consumer, earlier_trip, i)
                         .get()
@@ -144,7 +148,7 @@ pub fn explore_trip_patterns(consumer: &Consumer, state: &mut State) {
     state.update_buffer.par_extend(updates);
 }
 
-pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
+pub fn explore_trip_patterns_reverse(query: &RaptorQuery, consumer: &Consumer, state: &mut State) {
     let updates = state
         .active_trip_patterns
         .par_iter()
@@ -210,7 +214,7 @@ pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
 
                 if previous_label >= arrival_time
                     && let Some(latest_trip) =
-                        find_latest_trip(consumer, trip_pattern.idx, i, previous_label).get()
+                        find_latest_trip(consumer, query, trip_pattern.idx, i, previous_label).get()
                 {
                     let later_arrival = get_arrival_time(consumer, latest_trip, i)
                         .get()

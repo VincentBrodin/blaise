@@ -229,10 +229,26 @@ impl Itinerary {
                 legs.reverse();
             }
 
+            // ==========================================
+            // 5. MERGE CONSECUTIVE WALKS
+            // ==========================================
+            let mut merged_legs: Vec<Leg> = Vec::new();
+            for leg in legs {
+                if let Some(last_leg) = merged_legs.last_mut()
+                    && matches!(last_leg.leg_type, LegType::Walk)
+                    && matches!(leg.leg_type, LegType::Walk)
+                {
+                    last_leg.to = leg.to;
+                    last_leg.arrival_time = leg.arrival_time;
+                    continue;
+                }
+                merged_legs.push(leg);
+            }
+
             Ok(Self {
                 from: query.origin,
                 to: query.destination,
-                legs,
+                legs: merged_legs,
             })
         } else {
             Err(crate::Error::NoRoute)
