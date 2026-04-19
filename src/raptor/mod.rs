@@ -12,7 +12,7 @@ use crate::{
             explore_trip_patterns_reverse,
         },
         itinerary::Itinerary,
-        query::{Location, RaptorQuery},
+        query::{QueryLocation, RaptorQuery},
         state::State,
     },
     spatial::SpatialHash,
@@ -134,39 +134,47 @@ fn solve_core(
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             match query.destination {
-                Location::Stop(stop_idx) => {
-                    state.marked_stops[stop_idx.as_usize()] = true;
-                    state.current_labels[stop_idx.as_usize()] = Opt::new(time);
-                    state.tau_star[stop_idx.as_usize()] = Opt::new(time);
-                    let parent_idx = state.calc_parent_idx(0, stop_idx);
+                QueryLocation::Stop(stop) => {
+                    state.marked_stops[stop.as_usize()] = true;
+                    state.current_labels[stop.as_usize()] = Opt::new(time);
+                    state.tau_star[stop.as_usize()] = Opt::new(time);
+                    let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
-                Location::Coordinate(coordinate) => spatial
+                QueryLocation::Stops(stops) => {
+                    for stop in stops.iter().copied() {
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()] = Opt::new(time);
+                        state.tau_star[stop.as_usize()] = Opt::new(time);
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(consumer, coordinate, query.search_radius)
-                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .filter_map(|stop_idx| {
-                        consumer
-                            .stop(stop_idx)
-                            .coordinate
-                            .get()
-                            .map(|c| (stop_idx, c))
-                    })
-                    .for_each(|(stop_idx, to_coordinate)| {
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 - time_to_walk.0);
-                        state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] = Opt::new(arr_time);
-                        state.tau_star[stop_idx.as_usize()] = Opt::new(arr_time);
-                        let parent_idx = state.calc_parent_idx(0, stop_idx);
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()] = Opt::new(arr_time);
+                        state.tau_star[stop.as_usize()] = Opt::new(arr_time);
+                        let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
             };
 
             match query.origin {
-                Location::Stop(stop_idx) => {
-                    state.target_stops.push((stop_idx, Duration(0)));
+                QueryLocation::Stop(stop) => {
+                    state.target_stops.push((stop, Duration(0)));
                 }
-                Location::Coordinate(coordinate) => spatial
+                QueryLocation::Stops(stops) => {
+                    for stop in stops.iter().copied() {
+                        state.target_stops.push((stop, Duration(0)));
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(consumer, coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
                     .filter_map(|stop_idx| {
@@ -184,51 +192,53 @@ fn solve_core(
         }
         query::TimeDirection::Departure(time) => {
             match query.origin {
-                Location::Stop(stop_idx) => {
-                    state.marked_stops[stop_idx.as_usize()] = true;
-                    state.current_labels[stop_idx.as_usize()] = Opt::new(time);
-                    state.tau_star[stop_idx.as_usize()] = Opt::new(time);
-                    let parent_idx = state.calc_parent_idx(0, stop_idx);
+                QueryLocation::Stop(stop) => {
+                    state.marked_stops[stop.as_usize()] = true;
+                    state.current_labels[stop.as_usize()] = Opt::new(time);
+                    state.tau_star[stop.as_usize()] = Opt::new(time);
+                    let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
-                Location::Coordinate(coordinate) => spatial
+                QueryLocation::Stops(stops) => {
+                    for stop in stops.iter().copied() {
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()] = Opt::new(time);
+                        state.tau_star[stop.as_usize()] = Opt::new(time);
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(consumer, coordinate, query.search_radius)
-                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .filter_map(|stop_idx| {
-                        consumer
-                            .stop(stop_idx)
-                            .coordinate
-                            .get()
-                            .map(|c| (stop_idx, c))
-                    })
-                    .for_each(|(stop_idx, to_coordinate)| {
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 + time_to_walk.0);
-                        state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] = Opt::new(arr_time);
-                        state.tau_star[stop_idx.as_usize()] = Opt::new(arr_time);
-                        let parent_idx = state.calc_parent_idx(0, stop_idx);
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()] = Opt::new(arr_time);
+                        state.tau_star[stop.as_usize()] = Opt::new(arr_time);
+                        let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
             };
 
             match query.destination {
-                Location::Stop(stop_idx) => {
-                    state.target_stops.push((stop_idx, Duration(0)));
+                QueryLocation::Stop(stop) => {
+                    state.target_stops.push((stop, Duration(0)));
                 }
-                Location::Coordinate(coordinate) => spatial
+                QueryLocation::Stops(stops) => {
+                    for stop in stops.iter().copied() {
+                        state.target_stops.push((stop, Duration(0)));
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(consumer, coordinate, query.search_radius)
-                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .filter_map(|stop_idx| {
-                        consumer
-                            .stop(stop_idx)
-                            .coordinate
-                            .get()
-                            .map(|c| (stop_idx, c))
-                    })
-                    .for_each(|(stop_idx, to_coordinate)| {
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .for_each(|(stop, to_coordinate)| {
                         let walk_time = time_to_walk(coordinate, to_coordinate);
-                        state.target_stops.push((stop_idx, walk_time));
+                        state.target_stops.push((stop, walk_time));
                     }),
             }
         }
@@ -256,7 +266,6 @@ fn solve_core(
     }
 
     for round in 1..MAX_ROUNDS {
-        println!("ROUND: {round}");
         if !state.marked_stops.iter().any(|&marked| marked) {
             break;
         }

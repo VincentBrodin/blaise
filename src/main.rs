@@ -1,9 +1,10 @@
-use std::{env, fs::File, time::Instant};
+use dialoguer::{FuzzySelect, theme::ColorfulTheme};
+use std::{collections::HashMap, env, fs::File, time::Instant};
 
 use blaise::{
     raptor::{
         itinerary::{Itinerary, LegType},
-        query::{Location, RaptorQuery},
+        query::{Location, QueryLocation, RaptorQuery},
         solve,
         state::State,
     },
@@ -11,7 +12,7 @@ use blaise::{
 };
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Coordinate, Time},
+    models::{StopIdx, StringSlice, Time},
 };
 use memmap2::MmapOptions;
 
@@ -28,21 +29,55 @@ pub fn main() {
     let consumer = Consumer::new(&mmap).expect("Failed to parse files header");
     let spatial_hash = SpatialHash::new(&consumer);
 
-    let start = Coordinate::new(59.58159206001833, 17.894813461650386);
-    spatial_hash
-        .get_in_radius_iter(&consumer, start, 1500.0)
-        .map(|stop| consumer.stop(stop))
-        .for_each(|stop| {
-            println!(
-                "Name: {}",
-                consumer.string(stop.name.get().expect("FAILED TO GET NAME"))
-            )
+    let mut name_to_stops: HashMap<StringSlice, Vec<StopIdx>> = HashMap::new();
+
+    for (idx, stop) in consumer.stops.iter().enumerate() {
+        let stop_idx = StopIdx(idx as u32);
+
+        if consumer.iter_trips_by_stop(stop_idx).count() == 0 {
+            continue;
+        }
+
+        let name = stop.name.get().or_else(|| {
+            stop.parent_idx
+                .get()
+                .and_then(|p| consumer.stop(p).name.get())
         });
+
+        if let Some(name) = name {
+            name_to_stops.entry(name).or_default().push(stop_idx);
+        }
+    }
+
+    let mut valid_groups: Vec<(StringSlice, Vec<StopIdx>)> = name_to_stops.into_iter().collect();
+
+    // Sort to keep consistent ordering in the fuzzy selector
+    valid_groups.sort_by(|a, b| consumer.string(a.0).cmp(consumer.string(b.0)));
+
+    let stop_names: Vec<&str> = valid_groups
+        .iter()
+        .map(|(name_idx, _)| consumer.string(*name_idx))
+        .collect();
+
+    let from = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("From")
+        .default(0)
+        .items(stop_names.iter())
+        .interact()
+        .unwrap();
+
+    let to = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("To")
+        .default(0)
+        .items(stop_names.iter())
+        .interact()
+        .unwrap();
+
     let query = RaptorQuery::new(
-        start.into(),
-        Coordinate::new(59.34052911048153, 18.03823261410188).into(),
+        QueryLocation::Stops(&valid_groups[from].1),
+        QueryLocation::Stops(&valid_groups[to].1),
     )
-    .with_arrival(Time::from_hms("09:40:00").expect("Failed to parse time"));
+    .with_departure(Time::from_hms("08:00:00").expect("Failed to parse time"));
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
@@ -70,8 +105,11 @@ fn format_location(loc: &Location, consumer: &Consumer) -> String {
 }
 
 pub fn print_itinerary(itinerary: &Itinerary, consumer: &Consumer) {
+    // Clear screen for a fresh view
+    print!("{esc}c", esc = 27 as char);
+
     println!("\n=========================================================");
-    println!("🗺️  JOURNEY ITINERARY");
+    println!("🗺️  \x1b[1mJOURNEY ITINERARY\x1b[0m");
     println!("=========================================================\n");
 
     if itinerary.legs.is_empty() {
@@ -79,15 +117,14 @@ pub fn print_itinerary(itinerary: &Itinerary, consumer: &Consumer) {
         return;
     }
 
-    // Relying entirely on your Display implementation for Time!
     let start_time = itinerary.legs.first().unwrap().departure_time.scheduled;
     let end_time = itinerary.legs.last().unwrap().arrival_time.scheduled;
     let origin_name = format_location(&itinerary.from, consumer);
     let dest_name = format_location(&itinerary.to, consumer);
 
-    println!("📍 From:  {}", origin_name);
-    println!("📍 To:    {}", dest_name);
-    println!("🕒 Time:  {} -> {}", start_time, end_time);
+    println!("📍 \x1b[1mFrom:\x1b[0m  {}", origin_name);
+    println!("📍 \x1b[1mTo:\x1b[0m    {}", dest_name);
+    println!("⏱️ \x1b[1mTime:\x1b[0m  {} -> {}", start_time, end_time);
     println!("---------------------------------------------------------\n");
 
     for leg in itinerary.legs.iter() {
@@ -98,41 +135,45 @@ pub fn print_itinerary(itinerary: &Itinerary, consumer: &Consumer) {
 
         match leg.leg_type {
             LegType::Transit => {
-                println!("🚌 TRANSIT");
-                println!("  {}  Board at {}", dep_time, from_name);
+                println!("🚌 \x1b[1;34mTRANSIT\x1b[0m");
 
-                let stops_count = leg.stops.len();
-                if stops_count > 2 {
-                    println!("   |     ... {} intermediate stops", stops_count - 2);
-                } else {
-                    println!("   |     ... direct routing");
+                if leg.stops.is_empty() {
+                    println!("  {} ┌ Board at \x1b[1m{}\x1b[0m", dep_time, from_name);
+                    println!("         │");
+                    println!("  {} └ Alight at \x1b[1m{}\x1b[0m\n", arr_time, to_name);
+                    continue;
                 }
 
-                println!("  {}  Alight at {}\n", arr_time, to_name);
+                for (i, stop) in leg.stops.iter().enumerate() {
+                    let name = format_location(&stop.location, consumer);
+                    if i == 0 {
+                        let dep = stop.departure_time.scheduled;
+                        println!("  {} ┌ Board at \x1b[1m{}\x1b[0m", dep, name);
+                    } else if i == leg.stops.len() - 1 {
+                        let arr = stop.arrival_time.scheduled;
+                        println!("  {} └ Alight at \x1b[1m{}\x1b[0m\n", arr, name);
+                    } else {
+                        let arr = stop.arrival_time.scheduled;
+                        println!("  {} ├  {}", arr, name);
+                    }
+                }
             }
-            LegType::Transfer => {
-                println!("🚶 TRANSFER");
-                println!("  {}  Leave {}", dep_time, from_name);
-                println!("   |     ... ");
-                println!("  {}  Arrive at {}\n", arr_time, to_name);
-            }
-            LegType::Walk => {
-                println!("🚶 WALK");
-                println!("  {}  Leave {}", dep_time, from_name);
-                println!("   |     ... ");
-                println!("  {}  Arrive at {}\n", arr_time, to_name);
-            }
+            LegType::Transfer | LegType::Walk | LegType::Origin => {
+                let (icon, title) = match leg.leg_type {
+                    LegType::Transfer => ("🔄", "\x1b[1;33mTRANSFER\x1b[0m"),
+                    LegType::Walk => ("🚶", "\x1b[1;32mWALK\x1b[0m"),
+                    LegType::Origin => ("🚶", "\x1b[1;32mSTARTING WALK\x1b[0m"),
+                    _ => unreachable!(),
+                };
 
-            LegType::Origin => {
-                println!("🚶 STARTING WALK");
-                println!("  {}  Leave {}", dep_time, from_name);
-                println!("   |     ... ");
-                println!("  {}  Arrive at {}\n", arr_time, to_name);
+                println!("{} {}", icon, title);
+                println!("  {} ┌ Leave \x1b[1m{}\x1b[0m", dep_time, from_name);
+                println!("  {} └ Arrive at \x1b[1m{}\x1b[0m\n", arr_time, to_name);
             }
         }
     }
 
     println!("=========================================================");
-    println!("🎉 Arrived at Destination at {}", end_time);
+    println!("🎉 \x1b[1mArrived at Destination at {}\x1b[0m", end_time);
     println!("=========================================================\n");
 }

@@ -2,6 +2,39 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gtfs_bin::models::{Coordinate, Date, StopIdx, Time};
 
+pub enum QueryLocation<'a> {
+    Stop(StopIdx),
+    Stops(&'a [StopIdx]),
+    Coordinate(Coordinate),
+}
+
+impl<'a> From<Coordinate> for QueryLocation<'a> {
+    fn from(value: Coordinate) -> Self {
+        QueryLocation::Coordinate(value)
+    }
+}
+
+impl<'a> From<StopIdx> for QueryLocation<'a> {
+    fn from(value: StopIdx) -> Self {
+        QueryLocation::Stop(value)
+    }
+}
+
+impl<'a> From<&'a [StopIdx]> for QueryLocation<'a> {
+    fn from(value: &'a [StopIdx]) -> Self {
+        QueryLocation::Stops(value)
+    }
+}
+
+impl<'a> QueryLocation<'a> {
+    pub fn resolve(&self, stop: StopIdx) -> Location {
+        match self {
+            QueryLocation::Coordinate(c) => Location::Coordinate(*c),
+            _ => Location::Stop(stop),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Location {
     Stop(StopIdx),
@@ -26,16 +59,16 @@ pub enum TimeDirection {
     Departure(Time),
 }
 
-pub struct RaptorQuery {
-    pub origin: Location,
-    pub destination: Location,
+pub struct RaptorQuery<'a> {
+    pub origin: QueryLocation<'a>,
+    pub destination: QueryLocation<'a>,
     pub time_direction: TimeDirection,
-    pub search_radius: f64,
     pub date: Date,
+    pub search_radius: f64,
 }
 
-impl RaptorQuery {
-    pub fn new(origin: Location, destination: Location) -> Self {
+impl<'a> RaptorQuery<'a> {
+    pub fn new(origin: QueryLocation<'a>, destination: QueryLocation<'a>) -> Self {
         let now = SystemTime::now();
 
         let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");

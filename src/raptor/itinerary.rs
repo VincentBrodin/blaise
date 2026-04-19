@@ -60,9 +60,9 @@ impl Itinerary {
             // ==========================================
             let (first_leg_from, first_leg_to) = match query.time_direction {
                 query::TimeDirection::Departure(_) => {
-                    (Location::Stop(best_stop), query.destination)
+                    (Location::Stop(best_stop), query.destination.resolve(best_stop))
                 }
-                query::TimeDirection::Arrival(_) => (query.origin, Location::Stop(best_stop)),
+                query::TimeDirection::Arrival(_) => (query.origin.resolve(best_stop), Location::Stop(best_stop)),
             };
 
             if first_leg_from != first_leg_to {
@@ -196,7 +196,7 @@ impl Itinerary {
                     let arr_t = state.tau_star[current_stop.as_usize()]
                         .get()
                         .unwrap_or(Time(0));
-                    (query.origin, Location::Stop(current_stop), dep_t, arr_t)
+                    (query.origin.resolve(current_stop), Location::Stop(current_stop), dep_t, arr_t)
                 }
                 query::TimeDirection::Arrival(arr_t) => {
                     let dep_t = state.tau_star[current_stop.as_usize()]
@@ -204,7 +204,7 @@ impl Itinerary {
                         .unwrap_or(Time(0));
                     (
                         Location::Stop(current_stop),
-                        query.destination,
+                        query.destination.resolve(current_stop),
                         dep_t,
                         arr_t,
                     )
@@ -245,9 +245,19 @@ impl Itinerary {
                 merged_legs.push(leg);
             }
 
+            let overall_from = match query.time_direction {
+                query::TimeDirection::Departure(_) => query.origin.resolve(current_stop),
+                query::TimeDirection::Arrival(_) => query.origin.resolve(best_stop),
+            };
+
+            let overall_to = match query.time_direction {
+                query::TimeDirection::Departure(_) => query.destination.resolve(best_stop),
+                query::TimeDirection::Arrival(_) => query.destination.resolve(current_stop),
+            };
+
             Ok(Self {
-                from: query.origin,
-                to: query.destination,
+                from: overall_from,
+                to: overall_to,
                 legs: merged_legs,
             })
         } else {
