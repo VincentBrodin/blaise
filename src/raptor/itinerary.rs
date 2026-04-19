@@ -59,10 +59,13 @@ impl Itinerary {
             // 1. FIRST BOUNDARY (Outer Edge)
             // ==========================================
             let (first_leg_from, first_leg_to) = match query.time_direction {
-                query::TimeDirection::Departure(_) => {
-                    (Location::Stop(best_stop), query.destination.resolve(best_stop))
+                query::TimeDirection::Departure(_) => (
+                    Location::Stop(best_stop),
+                    query.destination.resolve(best_stop),
+                ),
+                query::TimeDirection::Arrival(_) => {
+                    (query.origin.resolve(best_stop), Location::Stop(best_stop))
                 }
-                query::TimeDirection::Arrival(_) => (query.origin.resolve(best_stop), Location::Stop(best_stop)),
             };
 
             if first_leg_from != first_leg_to {
@@ -196,7 +199,12 @@ impl Itinerary {
                     let arr_t = state.tau_star[current_stop.as_usize()]
                         .get()
                         .unwrap_or(Time(0));
-                    (query.origin.resolve(current_stop), Location::Stop(current_stop), dep_t, arr_t)
+                    (
+                        query.origin.resolve(current_stop),
+                        Location::Stop(current_stop),
+                        dep_t,
+                        arr_t,
+                    )
                 }
                 query::TimeDirection::Arrival(arr_t) => {
                     let dep_t = state.tau_star[current_stop.as_usize()]
