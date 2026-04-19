@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gtfs_bin::models::{Coordinate, StopIdx, Time};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Location {
     Stop(StopIdx),
     Coordinate(Coordinate),

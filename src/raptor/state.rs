@@ -1,6 +1,6 @@
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Opt, Sentinel, StopIdx, Time},
+    models::{Duration, Opt, Sentinel, StopIdx, Time},
 };
 
 use crate::raptor::{MAX_ROUNDS, Parent, SequnceIdx, Update, query::TimeDirection};
@@ -13,7 +13,7 @@ pub struct State {
     pub active_trip_patterns: Vec<Opt<SequnceIdx>>,
 
     pub target_tau_star: Opt<Time>,
-    pub target_stops: Vec<StopIdx>,
+    pub target_stops: Vec<(StopIdx, Duration)>,
     pub target_best_stop: Opt<StopIdx>,
     pub target_best_round: Option<usize>,
 

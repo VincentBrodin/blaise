@@ -1,33 +1,13 @@
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Delay, Distance, Opt, Time},
-    rt::Realtime,
+    models::{Distance, Opt, Time},
 };
 
 use crate::raptor::{
-    Parent,
-    query::{Location, RaptorQuery},
+    LiveTime, Parent,
+    query::{self, Location, RaptorQuery},
     state::State,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct LiveTime {
-    pub scheduled: Time,
-    pub actual: Time,
-}
-
-impl LiveTime {
-    pub fn delay(&self) -> Delay {
-        Delay((self.actual.0 as i64 - self.scheduled.0 as i64) as i16)
-    }
-
-    pub fn scheduled_only(time: Time) -> Self {
-        Self {
-            scheduled: time,
-            actual: time,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Leg {
@@ -43,6 +23,7 @@ pub struct Leg {
 pub enum LegType {
     Transit,
     Transfer,
+    Walk,
     Origin,
 }
 
@@ -63,53 +44,68 @@ pub struct Itinerary {
 
 impl Itinerary {
     pub(crate) fn new(
-        _query: &RaptorQuery,
+        query: &RaptorQuery,
         state: &State,
         consumer: &Consumer,
-        _realtime: &Realtime,
     ) -> Result<Self, crate::Error> {
         if let Some(best_stop) = state.target_best_stop.get()
             && let Some(best_round) = state.target_best_round
         {
-            let mut legs: Vec<Leg> = Vec::with_capacity((best_round * 2) + 1);
+            let mut legs: Vec<Leg> = Vec::with_capacity((best_round * 2) + 2);
             let mut current_stop = best_stop;
             let mut current_round = best_round;
 
+            // ==========================================
+            // 1. FIRST BOUNDARY (Outer Edge)
+            // ==========================================
+            let (first_leg_from, first_leg_to) = match query.time_direction {
+                query::TimeDirection::Departure(_) => {
+                    (Location::Stop(best_stop), query.destination)
+                }
+                query::TimeDirection::Arrival(_) => (query.origin, Location::Stop(best_stop)),
+            };
+
+            if first_leg_from != first_leg_to {
+                let boundary_time = state.tau_star[best_stop.as_usize()]
+                    .get()
+                    .unwrap_or(Time(0));
+
+                legs.push(Leg {
+                    from: first_leg_from,
+                    to: first_leg_to,
+                    departure_time: LiveTime::scheduled_only(boundary_time),
+                    arrival_time: LiveTime::scheduled_only(boundary_time),
+                    stops: vec![],
+                    leg_type: LegType::Walk,
+                });
+            }
+
+            // ==========================================
+            // 2. THE RECONSTRUCTION LOOP
+            // ==========================================
             loop {
-                println!(
-                    "Exploring round {current_round} - {}",
-                    current_stop.as_usize()
-                );
                 let parent_idx = state.calc_parent_idx(current_round, current_stop);
                 let parent = state.parents[parent_idx].expect("Failed to get parent");
+
                 match parent {
-                    Parent::Transit { boarding_p, trip } => {
+                    Parent::Transit {
+                        boarding_p,
+                        alighting_p,
+                        trip,
+                        departure_time,
+                        arrival_time,
+                    } => {
                         let trip_pattern = consumer.trip_pattern_by_trip(trip);
                         let stop_sequences: Vec<_> = consumer
                             .iter_stop_sequence_by_trip_pattern(trip_pattern.idx)
                             .collect();
 
                         let boarding_stop = stop_sequences[boarding_p.as_usize()];
+                        let alighting_stop = stop_sequences[alighting_p.as_usize()];
                         let stop_times = consumer.stop_times_by_trip(trip);
 
-                        let departure_time = LiveTime::scheduled_only(
-                            stop_times[boarding_p.as_usize()]
-                                .departure_time
-                                .get()
-                                .unwrap(),
-                        );
-
-                        let alighting_p_idx = stop_sequences
-                            .iter()
-                            .enumerate()
-                            .position(|(i, s)| s.idx == current_stop && i > boarding_p.as_usize())
-                            .unwrap();
-                        let arrival_time = LiveTime::scheduled_only(
-                            stop_times[alighting_p_idx].arrival_time.get().unwrap(),
-                        );
-
                         let mut leg_stops = Vec::new();
-                        for idx in boarding_p.as_usize()..=alighting_p_idx {
+                        for idx in boarding_p.as_usize()..=alighting_p.as_usize() {
                             let st = stop_times[idx];
                             leg_stops.push(LegStop {
                                 location: Location::Stop(stop_sequences[idx].idx),
@@ -125,48 +121,95 @@ impl Itinerary {
 
                         legs.push(Leg {
                             from: Location::Stop(boarding_stop.idx),
-                            to: Location::Stop(current_stop),
+                            to: Location::Stop(alighting_stop.idx),
                             departure_time,
                             arrival_time,
                             stops: leg_stops,
                             leg_type: LegType::Transit,
                         });
 
-                        current_stop = boarding_stop.idx;
+                        match query.time_direction {
+                            query::TimeDirection::Arrival(_) => current_stop = alighting_stop.idx,
+                            query::TimeDirection::Departure(_) => current_stop = boarding_stop.idx,
+                        }
 
-                        if current_round == 0 {
+                        if current_round > 0 {
+                            current_round -= 1;
+                        } else {
                             break;
                         }
-                        current_round -= 1;
                     }
-                    Parent::Transfer { from_stop } => {
-                        let arrival_time = state.tau_star[current_stop.as_usize()].get().unwrap();
-                        let departure_time = state.tau_star[from_stop.as_usize()].get().unwrap();
+                    Parent::Transfer {
+                        from_stop,
+                        departure_time,
+                        arrival_time,
+                    } => {
+                        let (from_loc, to_loc) = match query.time_direction {
+                            query::TimeDirection::Arrival(_) => (current_stop, from_stop),
+                            query::TimeDirection::Departure(_) => (from_stop, current_stop),
+                        };
 
                         legs.push(Leg {
-                            from: Location::Stop(from_stop),
-                            to: Location::Stop(current_stop),
-                            departure_time: LiveTime::scheduled_only(departure_time),
-                            arrival_time: LiveTime::scheduled_only(arrival_time),
+                            from: Location::Stop(from_loc),
+                            to: Location::Stop(to_loc),
+                            departure_time,
+                            arrival_time,
                             stops: vec![],
                             leg_type: LegType::Transfer,
                         });
 
                         current_stop = from_stop;
                     }
-                    Parent::Origin => break,
+                    Parent::Origin => {
+                        break;
+                    }
                 }
             }
-            legs.reverse();
 
-            let from_loc = legs
-                .first()
-                .map(|l| l.from)
-                .unwrap_or(Location::Stop(best_stop));
+            // ==========================================
+            // 3. SECOND BOUNDARY (Inner Edge)
+            // ==========================================
+            let (last_leg_from, last_leg_to, last_dep, last_arr) = match query.time_direction {
+                query::TimeDirection::Departure(dep_t) => {
+                    let arr_t = state.tau_star[current_stop.as_usize()]
+                        .get()
+                        .unwrap_or(Time(0));
+                    (query.origin, Location::Stop(current_stop), dep_t, arr_t)
+                }
+                query::TimeDirection::Arrival(arr_t) => {
+                    let dep_t = state.tau_star[current_stop.as_usize()]
+                        .get()
+                        .unwrap_or(Time(0));
+                    (
+                        Location::Stop(current_stop),
+                        query.destination,
+                        dep_t,
+                        arr_t,
+                    )
+                }
+            };
+
+            if last_leg_from != last_leg_to {
+                legs.push(Leg {
+                    from: last_leg_from,
+                    to: last_leg_to,
+                    departure_time: LiveTime::scheduled_only(last_dep),
+                    arrival_time: LiveTime::scheduled_only(last_arr),
+                    stops: vec![],
+                    leg_type: LegType::Walk,
+                });
+            }
+
+            // ==========================================
+            // 4. CHRONOLOGICAL REVERSAL
+            // ==========================================
+            if matches!(query.time_direction, query::TimeDirection::Departure(_)) {
+                legs.reverse();
+            }
 
             Ok(Self {
-                from: from_loc,
-                to: Location::Stop(best_stop),
+                from: query.origin,
+                to: query.destination,
                 legs,
             })
         } else {

@@ -9,7 +9,10 @@ use blaise::{
     },
     spatial::SpatialHash,
 };
-use gtfs_bin::{consumer::Consumer, models::Coordinate};
+use gtfs_bin::{
+    consumer::Consumer,
+    models::{Coordinate, Time},
+};
 use memmap2::MmapOptions;
 
 pub fn main() {
@@ -26,9 +29,10 @@ pub fn main() {
     let spatial_hash = SpatialHash::new(&consumer);
 
     let query = RaptorQuery::new(
-        Coordinate::new(59.18690599771732, 17.837204172152255).into(),
-        Coordinate::new(65.58345592681158, 22.16246562088225).into(),
-    );
+        Coordinate::new(59.580610871503765, 17.89480919447685).into(),
+        Coordinate::new(59.34052911048153, 18.03823261410188).into(),
+    )
+    .with_arrival(Time::from_hms("10:00:00").expect("Failed to parse time"));
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
@@ -95,11 +99,18 @@ pub fn print_itinerary(itinerary: &Itinerary, consumer: &Consumer) {
                 println!("  {}  Alight at {}\n", arr_time, to_name);
             }
             LegType::Transfer => {
-                println!("🚶 WALK / TRANSFER");
+                println!("🚶 TRANSFER");
                 println!("  {}  Leave {}", dep_time, from_name);
                 println!("   |     ... ");
                 println!("  {}  Arrive at {}\n", arr_time, to_name);
             }
+            LegType::Walk => {
+                println!("🚶 WALK");
+                println!("  {}  Leave {}", dep_time, from_name);
+                println!("   |     ... ");
+                println!("  {}  Arrive at {}\n", arr_time, to_name);
+            }
+
             LegType::Origin => {
                 println!("🚶 STARTING WALK");
                 println!("  {}  Leave {}", dep_time, from_name);

@@ -2,8 +2,7 @@ use std::mem;
 
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Coordinate, Duration, Opt, Sentinel, StopIdx, Time, TripIdx},
-    rt::RealtimeBuilder,
+    models::{Coordinate, Delay, Duration, Opt, Sentinel, StopIdx, Time, TripIdx},
 };
 
 use crate::{
@@ -38,14 +37,38 @@ impl SequnceIdx {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct LiveTime {
+    pub scheduled: Time,
+    pub actual: Time,
+}
+
+impl LiveTime {
+    pub fn delay(&self) -> Delay {
+        Delay((self.actual.0 as i64 - self.scheduled.0 as i64) as i16)
+    }
+
+    pub fn scheduled_only(time: Time) -> Self {
+        Self {
+            scheduled: time,
+            actual: time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Parent {
     Transit {
         boarding_p: SequnceIdx,
+        alighting_p: SequnceIdx,
         trip: TripIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
     },
 
     Transfer {
         from_stop: StopIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
     },
     Origin,
 }
@@ -81,6 +104,9 @@ pub fn solve(
                 Location::Stop(stop_idx) => {
                     state.marked_stops[stop_idx.as_usize()] = true;
                     state.current_labels[stop_idx.as_usize()] = Opt::new(time);
+                    state.tau_star[stop_idx.as_usize()] = Opt::new(time);
+                    let parent_idx = state.calc_parent_idx(0, stop_idx);
+                    state.parents[parent_idx] = Some(Parent::Origin);
                 }
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
@@ -90,25 +116,36 @@ pub fn solve(
                             .stop(stop_idx)
                             .coordinate
                             .get()
-                            .map(|coordinate| (stop_idx, coordinate))
+                            .map(|c| (stop_idx, c))
                     })
                     .for_each(|(stop_idx, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
+                        let arr_time = Time(time.0 - time_to_walk.0);
                         state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] =
-                            Opt::new(Time(time.0 + time_to_walk.0));
+                        state.current_labels[stop_idx.as_usize()] = Opt::new(arr_time);
+                        state.tau_star[stop_idx.as_usize()] = Opt::new(arr_time);
+                        let parent_idx = state.calc_parent_idx(0, stop_idx);
+                        state.parents[parent_idx] = Some(Parent::Origin);
                     }),
             };
 
             match query.origin {
                 Location::Stop(stop_idx) => {
-                    state.target_stops.push(stop_idx);
+                    state.target_stops.push((stop_idx, Duration(0)));
                 }
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .for_each(|stop_idx| {
-                        state.target_stops.push(stop_idx);
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .get()
+                            .map(|c| (stop_idx, c))
+                    })
+                    .for_each(|(stop_idx, to_coordinate)| {
+                        let walk_time = time_to_walk(coordinate, to_coordinate);
+                        state.target_stops.push((stop_idx, walk_time));
                     }),
             }
         }
@@ -117,6 +154,9 @@ pub fn solve(
                 Location::Stop(stop_idx) => {
                     state.marked_stops[stop_idx.as_usize()] = true;
                     state.current_labels[stop_idx.as_usize()] = Opt::new(time);
+                    state.tau_star[stop_idx.as_usize()] = Opt::new(time);
+                    let parent_idx = state.calc_parent_idx(0, stop_idx);
+                    state.parents[parent_idx] = Some(Parent::Origin);
                 }
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
@@ -126,31 +166,43 @@ pub fn solve(
                             .stop(stop_idx)
                             .coordinate
                             .get()
-                            .map(|coordinate| (stop_idx, coordinate))
+                            .map(|c| (stop_idx, c))
                     })
                     .for_each(|(stop_idx, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
+                        let arr_time = Time(time.0 + time_to_walk.0);
                         state.marked_stops[stop_idx.as_usize()] = true;
-                        state.current_labels[stop_idx.as_usize()] =
-                            Opt::new(Time(time.0 + time_to_walk.0));
+                        state.current_labels[stop_idx.as_usize()] = Opt::new(arr_time);
+                        state.tau_star[stop_idx.as_usize()] = Opt::new(arr_time);
+                        let parent_idx = state.calc_parent_idx(0, stop_idx);
+                        state.parents[parent_idx] = Some(Parent::Origin);
                     }),
             };
 
             match query.destination {
                 Location::Stop(stop_idx) => {
-                    state.target_stops.push(stop_idx);
+                    state.target_stops.push((stop_idx, Duration(0)));
                 }
                 Location::Coordinate(coordinate) => spatial
                     .get_in_radius_iter(coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
-                    .for_each(|stop_idx| {
-                        state.target_stops.push(stop_idx);
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .get()
+                            .map(|c| (stop_idx, c))
+                    })
+                    .for_each(|(stop_idx, to_coordinate)| {
+                        let walk_time = time_to_walk(coordinate, to_coordinate);
+                        state.target_stops.push((stop_idx, walk_time));
                     }),
             }
         }
     }
 
-    for round in 0..MAX_ROUNDS {
+    for round in 1..=MAX_ROUNDS {
+        println!("ROUND: {round}");
         if !state.marked_stops.iter().any(|&marked| marked) {
             break;
         }
@@ -221,20 +273,24 @@ pub fn solve(
             }
         }
 
-        for target_stop in state.target_stops.iter() {
-            if let Some(arrival_time) = state.current_labels[target_stop.as_usize()].get() {
+        for (target_stop, duration) in state.target_stops.iter() {
+            if let Some(label_time) = state.current_labels[target_stop.as_usize()].get() {
                 let current_best = state.target_tau_star.get();
+                let true_time = match query.time_direction {
+                    query::TimeDirection::Arrival(_) => Time(label_time.0 - duration.0),
+                    query::TimeDirection::Departure(_) => Time(label_time.0 + duration.0),
+                };
 
                 let improvement = match current_best {
                     None => true,
                     Some(best) => match query.time_direction {
-                        query::TimeDirection::Arrival(_) => arrival_time > best,
-                        query::TimeDirection::Departure(_) => arrival_time < best,
+                        query::TimeDirection::Arrival(_) => true_time > best,
+                        query::TimeDirection::Departure(_) => true_time < best,
                     },
                 };
 
                 if improvement {
-                    state.target_tau_star = Opt::new(arrival_time);
+                    state.target_tau_star = Opt::new(label_time);
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
                 }
@@ -242,8 +298,7 @@ pub fn solve(
         }
     }
 
-    let realtime = RealtimeBuilder::new(consumer).build(vec![].into_iter());
-    Itinerary::new(&query, state, consumer, &realtime)
+    Itinerary::new(&query, state, consumer)
 }
 
 pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
