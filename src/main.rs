@@ -30,7 +30,7 @@ pub fn main() {
 
     let start = Coordinate::new(59.58159206001833, 17.894813461650386);
     spatial_hash
-        .get_in_radius_iter(start, 1500.0)
+        .get_in_radius_iter(&consumer, start, 1500.0)
         .map(|stop| consumer.stop(stop))
         .for_each(|stop| {
             println!(
@@ -42,7 +42,7 @@ pub fn main() {
         start.into(),
         Coordinate::new(59.34052911048153, 18.03823261410188).into(),
     )
-    .with_arrival(Time::from_hms("08:55:00").expect("Failed to parse time"));
+    .with_arrival(Time::from_hms("09:40:00").expect("Failed to parse time"));
 
     let mut state = State::new(&consumer);
     let now = Instant::now();

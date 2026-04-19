@@ -7,11 +7,11 @@ use rayon::iter::{
 };
 
 use crate::{
-    raptor::{LiveTime, Parent, SequnceIdx, Update, state::State, time_to_walk},
+    raptor::{
+        LiveTime, Parent, SequnceIdx, Update, query::RaptorQuery, state::State, time_to_walk,
+    },
     spatial::SpatialHash,
 };
-
-const MAX_WALK_DIST: f64 = 1500.0;
 
 pub fn get_arrival_time(consumer: &Consumer, trip_idx: TripIdx, p_idx: SequnceIdx) -> Opt<Time> {
     let stop_times = consumer.stop_times_by_trip(trip_idx);
@@ -212,8 +212,13 @@ pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
                     && let Some(latest_trip) =
                         find_latest_trip(consumer, trip_pattern.idx, i, previous_label).get()
                 {
-                    active_trip = Opt::new(latest_trip);
-                    alighting_p = Opt::new(i);
+                    let later_arrival = get_arrival_time(consumer, latest_trip, i)
+                        .get()
+                        .unwrap_or(Time(u32::MIN));
+                    if active_trip.is_none() || later_arrival > arrival_time {
+                        active_trip = Opt::new(latest_trip);
+                        alighting_p = Opt::new(i);
+                    }
                 }
             }
             updates
@@ -222,7 +227,12 @@ pub fn explore_trip_patterns_reverse(consumer: &Consumer, state: &mut State) {
     state.update_buffer.par_extend(updates);
 }
 
-pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
+pub fn explore_transfers(
+    query: &RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialHash,
+    state: &mut State,
+) {
     let updates = state
         .marked_stops
         .par_iter()
@@ -273,7 +283,7 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
                 });
             if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
                 spatial
-                    .get_in_radius_iter(coordinate, MAX_WALK_DIST)
+                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
                     .filter_map(|stop_idx| {
                         consumer
@@ -312,7 +322,12 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
     state.update_buffer.par_extend(updates);
 }
 
-pub fn explore_transfers_reverse(consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
+pub fn explore_transfers_reverse(
+    query: &RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialHash,
+    state: &mut State,
+) {
     let updates = state
         .marked_stops
         .par_iter()
@@ -365,7 +380,7 @@ pub fn explore_transfers_reverse(consumer: &Consumer, spatial: &SpatialHash, sta
             // Spatial walking logic
             if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
                 spatial
-                    .get_in_radius_iter(coordinate, MAX_WALK_DIST)
+                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
                     .filter(|s| consumer.iter_trips_by_stop(*s).count() != 0)
                     .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                     .for_each(|(other_stop, other_coordinate)| {

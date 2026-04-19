@@ -42,6 +42,20 @@ impl State {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.tau_star.fill(Opt::new(Time::NONE));
+        self.current_labels.fill(Opt::new(Time::NONE));
+        self.previous_labels.fill(Opt::new(Time::NONE));
+        self.marked_stops.fill(false);
+        self.active_trip_patterns.fill(Opt::new(SequnceIdx::NONE));
+        self.target_tau_star = Opt::new(Time::NONE);
+        self.target_stops.clear();
+        self.target_best_stop = Opt::new(StopIdx::NONE);
+        self.target_best_round = None;
+        self.update_buffer.clear();
+        self.parents.fill(None);
+    }
+
     pub fn apply_updates(&mut self, round: usize, time_direction: TimeDirection) {
         let is_arrival = match time_direction {
             TimeDirection::Arrival(_) => true,

@@ -83,6 +83,7 @@ impl SpatialHash {
 
     pub fn get_in_radius_iter<'a>(
         &'a self,
+        consumer: &'a Consumer,
         coord: Coordinate,
         radius_m: f64,
     ) -> impl Iterator<Item = StopIdx> + 'a {
@@ -101,6 +102,29 @@ impl SpatialHash {
             })
             .filter_map(move |key| self.map.get(&key))
             .flat_map(move |slice| self.buffer[slice.to_range()].iter().copied())
+            .filter(move |&stop_idx| {
+                if let Some(other_coord) = consumer.stop(stop_idx).coordinate.get() {
+                    Self::distance(coord, other_coord) <= radius_m
+                } else {
+                    false
+                }
+            })
+    }
+
+    pub fn distance(a: Coordinate, b: Coordinate) -> f64 {
+        const R: f64 = 6371.0;
+        let dist_lat = f64::to_radians(a.lat_f64() - b.lat_f64());
+        let dist_lon = f64::to_radians(a.lon_f64() - b.lon_f64());
+        let a_val = f64::powi(f64::sin(dist_lat / 2.0), 2)
+            + f64::cos(f64::to_radians(b.lat_f64()))
+                * f64::cos(f64::to_radians(a.lat_f64()))
+                * f64::sin(dist_lon / 2.0)
+                * f64::sin(dist_lon / 2.0);
+        let c = 2.0 * f64::atan2(f64::sqrt(a_val), f64::sqrt(1.0 - a_val));
+        let euclidean_distance = R * c * 1000.0;
+        
+        // Apply circuity factor of 1.3 to get the network distance
+        euclidean_distance * 1.3
     }
 
     #[inline]

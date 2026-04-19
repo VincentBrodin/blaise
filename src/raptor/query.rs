@@ -45,7 +45,7 @@ impl RaptorQuery {
             origin,
             destination,
             time_direction: TimeDirection::Departure(duration_since_midnight),
-            search_radius: 500.0,
+            search_radius: 1500.0,
         }
     }
 
