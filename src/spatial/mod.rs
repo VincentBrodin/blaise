@@ -122,7 +122,7 @@ impl SpatialHash {
                 * f64::sin(dist_lon / 2.0);
         let c = 2.0 * f64::atan2(f64::sqrt(a_val), f64::sqrt(1.0 - a_val));
         let euclidean_distance = R * c * 1000.0;
-        
+
         // Apply circuity factor of 1.3 to get the network distance
         euclidean_distance * 1.3
     }
