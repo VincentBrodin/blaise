@@ -131,7 +131,8 @@ pub fn explore_trip_patterns(query: &RaptorQuery, consumer: &Consumer, state: &m
 
                 if previous_label < departure_time
                     && let Some(earlier_trip) =
-                        find_earliest_trip(consumer, query, trip_pattern.idx, i, previous_label).get()
+                        find_earliest_trip(consumer, query, trip_pattern.idx, i, previous_label)
+                            .get()
                 {
                     let earlier_departure = get_departure_time(consumer, earlier_trip, i)
                         .get()

@@ -59,7 +59,7 @@ impl RaptorQuery {
         self.time_direction = TimeDirection::Departure(departure);
         self
     }
-    
+
     pub fn with_date(mut self, date: Date) -> Self {
         self.date = date;
         self
