@@ -66,15 +66,23 @@ impl Itinerary {
             };
 
             if first_leg_from != first_leg_to {
-                let boundary_time = state.tau_star[best_stop.as_usize()]
+                let stop_time = state.tau_star[best_stop.as_usize()]
                     .get()
                     .unwrap_or(Time(0));
+                let target_time = state.target_tau_star.get().unwrap_or(stop_time);
+
+                // For Departure: Stop -> Destination (arr_t is target_tau_star)
+                // For Arrival: Origin -> Stop (dep_t is target_tau_star)
+                let (dep_t, arr_t) = match query.time_direction {
+                    query::TimeDirection::Departure(_) => (stop_time, target_time),
+                    query::TimeDirection::Arrival(_) => (target_time, stop_time),
+                };
 
                 legs.push(Leg {
                     from: first_leg_from,
                     to: first_leg_to,
-                    departure_time: LiveTime::scheduled_only(boundary_time),
-                    arrival_time: LiveTime::scheduled_only(boundary_time),
+                    departure_time: LiveTime::scheduled_only(dep_t),
+                    arrival_time: LiveTime::scheduled_only(arr_t),
                     stops: vec![],
                     leg_type: LegType::Walk,
                 });
@@ -84,6 +92,14 @@ impl Itinerary {
             // 2. THE RECONSTRUCTION LOOP
             // ==========================================
             loop {
+                // FIX: THE "DUMB START" SHORT-CIRCUIT
+                // If the stop we are currently at is reachable directly from the origin,
+                // stop here. This prevents unnecessary walks/transfers from being included.
+                let origin_parent_idx = state.calc_parent_idx(0, current_stop);
+                if let Some(Parent::Origin) = state.parents[origin_parent_idx] {
+                    break;
+                }
+
                 let parent_idx = state.calc_parent_idx(current_round, current_stop);
                 let parent = state.parents[parent_idx].expect("Failed to get parent");
 
@@ -143,6 +159,11 @@ impl Itinerary {
                         from_stop,
                         departure_time,
                         arrival_time,
+                    }
+                    | Parent::Walk {
+                        from_stop,
+                        departure_time,
+                        arrival_time,
                     } => {
                         let (from_loc, to_loc) = match query.time_direction {
                             query::TimeDirection::Arrival(_) => (current_stop, from_stop),
@@ -155,14 +176,15 @@ impl Itinerary {
                             departure_time,
                             arrival_time,
                             stops: vec![],
-                            leg_type: LegType::Transfer,
+                            leg_type: match parent {
+                                Parent::Transfer { .. } => LegType::Transfer,
+                                _ => LegType::Walk,
+                            },
                         });
 
                         current_stop = from_stop;
                     }
-                    Parent::Origin => {
-                        break;
-                    }
+                    Parent::Origin => break,
                 }
             }
 

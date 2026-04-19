@@ -28,11 +28,21 @@ pub fn main() {
     let consumer = Consumer::new(&mmap).expect("Failed to parse files header");
     let spatial_hash = SpatialHash::new(&consumer);
 
+    let start = Coordinate::new(59.58159206001833, 17.894813461650386);
+    spatial_hash
+        .get_in_radius_iter(start, 1500.0)
+        .map(|stop| consumer.stop(stop))
+        .for_each(|stop| {
+            println!(
+                "Name: {}",
+                consumer.string(stop.name.get().expect("FAILED TO GET NAME"))
+            )
+        });
     let query = RaptorQuery::new(
-        Coordinate::new(59.580610871503765, 17.89480919447685).into(),
+        start.into(),
         Coordinate::new(59.34052911048153, 18.03823261410188).into(),
     )
-    .with_arrival(Time::from_hms("10:00:00").expect("Failed to parse time"));
+    .with_arrival(Time::from_hms("08:55:00").expect("Failed to parse time"));
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
@@ -53,7 +63,9 @@ fn format_location(loc: &Location, consumer: &Consumer) -> String {
                 consumer.stop_id(stop.id).to_string()
             }
         }
-        Location::Coordinate(coord) => format!("Location ({:?})", coord),
+        Location::Coordinate(coord) => {
+            format!("Location ({}, {})", coord.lat_f64(), coord.lon_f64())
+        }
     }
 }
 

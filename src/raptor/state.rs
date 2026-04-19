@@ -36,7 +36,7 @@ impl State {
             target_best_stop: Opt::new(StopIdx::NONE),
             target_best_round: None,
             update_buffer: Vec::with_capacity(512),
-            parents: vec![None; consumer.stops.len() * MAX_ROUNDS],
+            parents: vec![None; consumer.stops.len() * MAX_ROUNDS + 1],
 
             stop_count: consumer.stops.len(),
         }

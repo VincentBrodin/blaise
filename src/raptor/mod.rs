@@ -70,6 +70,11 @@ pub enum Parent {
         departure_time: LiveTime,
         arrival_time: LiveTime,
     },
+    Walk {
+        from_stop: StopIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
+    },
     Origin,
 }
 
@@ -201,7 +206,26 @@ pub fn solve(
         }
     }
 
-    for round in 1..=MAX_ROUNDS {
+    match query.time_direction {
+        query::TimeDirection::Arrival(_) => explore_transfers_reverse(consumer, spatial, state),
+        query::TimeDirection::Departure(_) => explore_transfers(consumer, spatial, state),
+    }
+
+    state.apply_updates(0, query.time_direction);
+
+    for (target_stop, duration) in state.target_stops.iter() {
+        if let Some(label_time) = state.current_labels[target_stop.as_usize()].get() {
+            let true_time = match query.time_direction {
+                query::TimeDirection::Arrival(_) => Time(label_time.0 - duration.0),
+                query::TimeDirection::Departure(_) => Time(label_time.0 + duration.0),
+            };
+            state.target_tau_star = Opt::new(true_time);
+            state.target_best_stop = Opt::new(*target_stop);
+            state.target_best_round = Some(0);
+        }
+    }
+
+    for round in 1..MAX_ROUNDS {
         println!("ROUND: {round}");
         if !state.marked_stops.iter().any(|&marked| marked) {
             break;
@@ -290,7 +314,7 @@ pub fn solve(
                 };
 
                 if improvement {
-                    state.target_tau_star = Opt::new(label_time);
+                    state.target_tau_star = Opt::new(true_time);
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
                 }
@@ -312,6 +336,6 @@ pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Durat
             * f64::sin(dist_lon / 2.0);
     let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
     let distance = R * c * 1000.0;
-    let duration = (distance / 1.5).ceil() as u32;
+    let duration = (distance / 1.2).ceil() as u32;
     Duration(duration)
 }

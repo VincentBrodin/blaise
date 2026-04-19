@@ -11,7 +11,7 @@ use crate::{
     spatial::SpatialHash,
 };
 
-const MAX_WALK_DIST: f64 = 250.0;
+const MAX_WALK_DIST: f64 = 1500.0;
 
 pub fn get_arrival_time(consumer: &Consumer, trip_idx: TripIdx, p_idx: SequnceIdx) -> Opt<Time> {
     let stop_times = consumer.stop_times_by_trip(trip_idx);
@@ -245,14 +245,19 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
                     let departure_time = state.current_labels[stop_idx.as_usize()]
                         .get()
                         .unwrap_or(Time(u32::MAX));
-                    let arrival_time = Time(
-                        departure_time.0
-                            + transfer
-                                .min_transfer_time
-                                .get()
-                                .unwrap_or(Duration(u32::MIN))
-                                .0,
-                    );
+
+                    let mut transfer_time =
+                        transfer.min_transfer_time.get().unwrap_or(Duration(0)).0;
+
+                    if transfer_time == 0
+                        && let Some(from_coord) =
+                            consumer.stop(transfer.from_stop_idx).coordinate.get()
+                        && let Some(to_coord) = consumer.stop(transfer.to_stop_idx).coordinate.get()
+                    {
+                        transfer_time = time_to_walk(from_coord, to_coord).0;
+                    }
+
+                    let arrival_time = Time(departure_time.0 + transfer_time);
 
                     if arrival_time < tau_star && arrival_time < target_tau_star {
                         updates.push(Update::new(
@@ -292,7 +297,7 @@ pub fn explore_transfers(consumer: &Consumer, spatial: &SpatialHash, state: &mut
                             updates.push(Update::new(
                                 to_stop,
                                 arrival_time,
-                                Parent::Transfer {
+                                Parent::Walk {
                                     from_stop: stop_idx,
                                     departure_time: LiveTime::scheduled_only(departure_time),
                                     arrival_time: LiveTime::scheduled_only(arrival_time),
@@ -329,11 +334,16 @@ pub fn explore_transfers_reverse(consumer: &Consumer, spatial: &SpatialHash, sta
                         .get()
                         .unwrap_or(Time(u32::MIN));
 
-                    let transfer_time = transfer
-                        .min_transfer_time
-                        .get()
-                        .unwrap_or(Duration(u32::MIN))
-                        .0;
+                    let mut transfer_time =
+                        transfer.min_transfer_time.get().unwrap_or(Duration(0)).0;
+
+                    if transfer_time == 0
+                        && let Some(from_coord) =
+                            consumer.stop(transfer.from_stop_idx).coordinate.get()
+                        && let Some(to_coord) = consumer.stop(transfer.to_stop_idx).coordinate.get()
+                    {
+                        transfer_time = time_to_walk(from_coord, to_coord).0;
+                    }
 
                     if arrival_time.0 >= transfer_time {
                         let departure_time = Time(arrival_time.0 - transfer_time);
@@ -370,7 +380,7 @@ pub fn explore_transfers_reverse(consumer: &Consumer, spatial: &SpatialHash, sta
                                 updates.push(Update::new(
                                     other_stop,
                                     departure_time,
-                                    Parent::Transfer {
+                                    Parent::Walk {
                                         from_stop: stop_idx,
                                         departure_time: LiveTime::scheduled_only(departure_time),
                                         arrival_time: LiveTime::scheduled_only(arrival_time),
