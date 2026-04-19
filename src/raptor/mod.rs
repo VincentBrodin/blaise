@@ -107,20 +107,18 @@ pub fn solve(
 
     let itinerary = solve_core(&query, consumer, spatial, state)?;
 
-    if is_arrival {
-        if let Some(first_leg) = itinerary.legs.first() {
-            let optimal_departure = first_leg.departure_time.scheduled;
+    if is_arrival && let Some(first_leg) = itinerary.legs.first() {
+        let optimal_departure = first_leg.departure_time.scheduled;
 
-            let forward_query = RaptorQuery {
-                origin: query.origin,
-                destination: query.destination,
-                time_direction: query::TimeDirection::Departure(optimal_departure),
-                search_radius: query.search_radius,
-            };
+        let forward_query = RaptorQuery {
+            origin: query.origin,
+            destination: query.destination,
+            time_direction: query::TimeDirection::Departure(optimal_departure),
+            search_radius: query.search_radius,
+        };
 
-            state.reset();
-            return solve_core(&forward_query, consumer, spatial, state);
-        }
+        state.reset();
+        return solve_core(&forward_query, consumer, spatial, state);
     }
 
     Ok(itinerary)
@@ -316,14 +314,14 @@ fn solve_core(
                 explore_trip_patterns_reverse(consumer, state);
                 state.apply_updates(round, query.time_direction);
 
-                explore_transfers_reverse(&query, consumer, spatial, state);
+                explore_transfers_reverse(query, consumer, spatial, state);
                 state.apply_updates(round, query.time_direction);
             }
             query::TimeDirection::Departure(_) => {
                 explore_trip_patterns(consumer, state);
                 state.apply_updates(round, query.time_direction);
 
-                explore_transfers(&query, consumer, spatial, state);
+                explore_transfers(query, consumer, spatial, state);
                 state.apply_updates(round, query.time_direction);
             }
         }
@@ -353,7 +351,7 @@ fn solve_core(
         }
     }
 
-    Itinerary::new(&query, state, consumer)
+    Itinerary::new(query, state, consumer)
 }
 
 pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
