@@ -9,10 +9,9 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use gtfs_bin::{
     consumer::Consumer,
     models::{Coordinate, Time},
-    rt::Realtime,
 };
 use memmap2::MmapOptions;
-use std::{env, fs::File, hint::black_box, path::Path, time::Duration};
+use std::{fs::File, hint::black_box, time::Duration};
 
 fn solve_forward(consumer: &Consumer, spatial: &SpatialHash, state: &mut State) {
     let from: QueryLocation = Coordinate::new(59.370_136, 18.001_749).into();
