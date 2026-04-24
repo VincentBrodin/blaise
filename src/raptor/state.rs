@@ -17,7 +17,6 @@ pub struct State {
     pub target_best_stop: Opt<StopIdx>,
     pub target_best_round: Option<usize>,
 
-    pub update_buffer: Vec<Update>,
     pub parents: Vec<Option<Parent>>,
 
     stop_count: usize,
@@ -35,7 +34,6 @@ impl State {
             target_stops: Vec::new(),
             target_best_stop: Opt::new(StopIdx::NONE),
             target_best_round: None,
-            update_buffer: Vec::with_capacity(512),
             parents: vec![None; consumer.stops.len() * MAX_ROUNDS + 1],
 
             stop_count: consumer.stops.len(),
@@ -52,11 +50,15 @@ impl State {
         self.target_stops.clear();
         self.target_best_stop = Opt::new(StopIdx::NONE);
         self.target_best_round = None;
-        self.update_buffer.clear();
         self.parents.fill(None);
     }
 
-    pub fn apply_updates(&mut self, round: usize, time_direction: TimeDirection) {
+    pub fn apply_updates(
+        &mut self,
+        round: usize,
+        time_direction: TimeDirection,
+        updates: &[Update],
+    ) {
         let is_arrival = match time_direction {
             TimeDirection::Arrival(_) => true,
             TimeDirection::Departure(_) => false,
@@ -67,7 +69,7 @@ impl State {
             Time(u32::MAX)
         });
 
-        for update in self.update_buffer.iter() {
+        for update in updates {
             let tau_star = self.tau_star[update.stop.as_usize()]
                 .get()
                 .unwrap_or(if is_arrival {
@@ -90,7 +92,6 @@ impl State {
                 self.marked_stops[update.stop.as_usize()] = true;
             }
         }
-        self.update_buffer.clear();
     }
 
     #[inline(always)]

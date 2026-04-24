@@ -15,7 +15,18 @@ keywords = [
   "public-transport",
 ]
 
+[[bench]]
+name = "short"
+harness = false
+
+[[bench]]
+name = "long"
+harness = false
+
+
 [dependencies]
+chrono = "0.4.44"
+criterion = "0.8.2"
 dialoguer = {version = "0.12.0", features = ["fuzzy-select"] }
 # gtfs-bin = "0.1.3"
 gtfs-bin = { path = "../gtfs-bin" }

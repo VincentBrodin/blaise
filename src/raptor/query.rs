@@ -1,6 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::{Local, Timelike};
+use gtfs_bin::{
+    consumer::Consumer,
+    models::{Coordinate, Date, StopIdx, Time},
+};
 
-use gtfs_bin::models::{Coordinate, Date, StopIdx, Time};
+use crate::{
+    raptor::{itinerary::Itinerary, solve, state::State},
+    spatial::SpatialHash,
+};
 
 pub enum QueryLocation<'a> {
     Stop(StopIdx),
@@ -69,18 +76,18 @@ pub struct RaptorQuery<'a> {
 
 impl<'a> RaptorQuery<'a> {
     pub fn new(origin: QueryLocation<'a>, destination: QueryLocation<'a>) -> Self {
-        let now = SystemTime::now();
-
-        let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
-
-        let duration_since_midnight = Time((duration_since_epoch.as_secs() % 86_400) as u32);
+        let now = Local::now();
+        let time = Time(now.num_seconds_from_midnight());
+        let seconds_since_epoch = now.timestamp();
+        let days_since_epoch = seconds_since_epoch / 86_400;
+        let date = Date(days_since_epoch as u32);
 
         Self {
             origin,
             destination,
-            time_direction: TimeDirection::Departure(duration_since_midnight),
+            time_direction: TimeDirection::Departure(time),
             search_radius: 1500.0,
-            date: Date((duration_since_epoch.as_secs() / 86_400) as u32),
+            date,
         }
     }
 
@@ -96,5 +103,14 @@ impl<'a> RaptorQuery<'a> {
     pub fn with_date(mut self, date: Date) -> Self {
         self.date = date;
         self
+    }
+
+    pub fn solve(
+        self,
+        consumer: &Consumer,
+        spatial: &SpatialHash,
+        state: &mut State,
+    ) -> Result<Itinerary, crate::Error> {
+        solve(self, consumer, spatial, state)
     }
 }

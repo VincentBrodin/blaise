@@ -244,14 +244,14 @@ fn solve_core(
         }
     }
 
-    match query.time_direction {
+    let updates = match query.time_direction {
         query::TimeDirection::Arrival(_) => {
             explore_transfers_reverse(query, consumer, spatial, state)
         }
         query::TimeDirection::Departure(_) => explore_transfers(query, consumer, spatial, state),
-    }
+    };
 
-    state.apply_updates(0, query.time_direction);
+    state.apply_updates(0, query.time_direction, &updates);
 
     for (target_stop, duration) in state.target_stops.iter() {
         if let Some(label_time) = state.current_labels[target_stop.as_usize()].get() {
@@ -321,18 +321,18 @@ fn solve_core(
 
         match query.time_direction {
             query::TimeDirection::Arrival(_) => {
-                explore_trip_patterns_reverse(query, consumer, state);
-                state.apply_updates(round, query.time_direction);
+                let updates = explore_trip_patterns_reverse(query, consumer, state);
+                state.apply_updates(round, query.time_direction, &updates);
 
-                explore_transfers_reverse(query, consumer, spatial, state);
-                state.apply_updates(round, query.time_direction);
+                let updates = explore_transfers_reverse(query, consumer, spatial, state);
+                state.apply_updates(round, query.time_direction, &updates);
             }
             query::TimeDirection::Departure(_) => {
-                explore_trip_patterns(query, consumer, state);
-                state.apply_updates(round, query.time_direction);
+                let updates = explore_trip_patterns(query, consumer, state);
+                state.apply_updates(round, query.time_direction, &updates);
 
-                explore_transfers(query, consumer, spatial, state);
-                state.apply_updates(round, query.time_direction);
+                let updates = explore_transfers(query, consumer, spatial, state);
+                state.apply_updates(round, query.time_direction, &updates);
             }
         }
 

@@ -25,6 +25,7 @@
             pkgs.rustfmt
             pkgs.taplo
             pkgs.protobuf
+            pkgs.gnuplot
           ];
 
           buildInputs = [

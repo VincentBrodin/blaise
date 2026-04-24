@@ -12,7 +12,7 @@ use blaise::{
 };
 use gtfs_bin::{
     consumer::Consumer,
-    models::{StopIdx, StringSlice, Time},
+    models::{StopIdx, StringSlice},
 };
 use memmap2::MmapOptions;
 
@@ -76,8 +76,7 @@ pub fn main() {
     let query = RaptorQuery::new(
         QueryLocation::Stops(&valid_groups[from].1),
         QueryLocation::Stops(&valid_groups[to].1),
-    )
-    .with_departure(Time::from_hms("08:00:00").expect("Failed to parse time"));
+    );
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
