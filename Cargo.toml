@@ -34,3 +34,10 @@ memmap2 = "0.9.10"
 rayon = "1.11.0"
 thiserror = "2.0.17"
 tracing = "0.1.44"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true 
