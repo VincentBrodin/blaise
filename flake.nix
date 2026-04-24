@@ -26,6 +26,7 @@
             pkgs.taplo
             pkgs.protobuf
             pkgs.gnuplot
+            pkgs.cargo-show-asm
           ];
 
           buildInputs = [
