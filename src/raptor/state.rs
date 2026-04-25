@@ -65,10 +65,17 @@ impl State {
             let label = ParetoLabel::new(update.time, update.cost);
 
             // Prune: skip if dominated by the per-stop tau_star OR the target front.
-            if self.tau_star[update.stop.as_usize()].is_dominated(update.time, update.cost, is_arrival) {
+            if self.tau_star[update.stop.as_usize()].is_dominated(
+                update.time,
+                update.cost,
+                is_arrival,
+            ) {
                 continue;
             }
-            if self.target_tau_star.is_dominated(update.time, update.cost, is_arrival) {
+            if self
+                .target_tau_star
+                .is_dominated(update.time, update.cost, is_arrival)
+            {
                 continue;
             }
 
