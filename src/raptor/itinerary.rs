@@ -4,7 +4,7 @@ use gtfs_bin::{
 };
 
 use crate::raptor::{
-    LiveTime, Parent,
+    LiveTime, Parent, ParetoLabel,
     query::{self, Location, RaptorQuery},
     state::State,
 };
@@ -69,10 +69,8 @@ impl Itinerary {
             };
 
             if first_leg_from != first_leg_to {
-                let stop_time = state.tau_star[best_stop.as_usize()]
-                    .get()
-                    .unwrap_or(Time(0));
-                let target_time = state.target_tau_star.get().unwrap_or(stop_time);
+                let stop_time = state.tau_star[best_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
+                let target_time = state.target_tau_star.unwrap_or(stop_time);
 
                 // For Departure: Stop -> Destination (arr_t is target_tau_star)
                 // For Arrival: Origin -> Stop (dep_t is target_tau_star)
@@ -84,8 +82,8 @@ impl Itinerary {
                 legs.push(Leg {
                     from: first_leg_from,
                     to: first_leg_to,
-                    departure_time: LiveTime::scheduled_only(dep_t),
-                    arrival_time: LiveTime::scheduled_only(arr_t),
+                    departure_time: LiveTime::scheduled_only(dep_t.time),
+                    arrival_time: LiveTime::scheduled_only(arr_t.time),
                     stops: vec![],
                     leg_type: LegType::Walk,
                 });
@@ -196,24 +194,20 @@ impl Itinerary {
             // ==========================================
             let (last_leg_from, last_leg_to, last_dep, last_arr) = match query.time_direction {
                 query::TimeDirection::Departure(dep_t) => {
-                    let arr_t = state.tau_star[current_stop.as_usize()]
-                        .get()
-                        .unwrap_or(Time(0));
+                    let arr_t = state.tau_star[current_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
                     (
                         query.origin.resolve(current_stop),
                         Location::Stop(current_stop),
                         dep_t,
-                        arr_t,
+                        arr_t.time,
                     )
                 }
                 query::TimeDirection::Arrival(arr_t) => {
-                    let dep_t = state.tau_star[current_stop.as_usize()]
-                        .get()
-                        .unwrap_or(Time(0));
+                    let dep_t = state.tau_star[current_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
                     (
                         Location::Stop(current_stop),
                         query.destination.resolve(current_stop),
-                        dep_t,
+                        dep_t.time,
                         arr_t,
                     )
                 }

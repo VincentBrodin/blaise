@@ -6,7 +6,8 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 
 use crate::{
     raptor::{
-        LiveTime, Parent, SequnceIdx, Update, query::RaptorQuery, state::State, time_to_walk,
+        LiveTime, Parent, ParetoLabel, SequnceIdx, Update, query::RaptorQuery, state::State,
+        time_to_walk,
     },
     spatial::SpatialHash,
 };
@@ -126,18 +127,18 @@ pub fn explore_trip_patterns(
                     .skip(p_idx.as_usize())
                     .map(|(i, stop)| (SequnceIdx(i as u32), stop))
                 {
-                    let tau_star = state.tau_star[stop.idx.as_usize()]
-                        .get()
-                        .unwrap_or(Time(u32::MAX));
-                    let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MAX));
+                    let tau_star = state.tau_star[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
+                    let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
+                    let label =
+                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
 
                     // PART A
                     if let Some(trip) = active_trip.get()
                         && let arrival_time = get_arrival_time(consumer, trip, i)
                             .get()
                             .unwrap_or(Time(u32::MAX))
-                        && arrival_time < tau_star
-                        && arrival_time < target_tau_star
+                        && arrival_time < tau_star.time
+                        && arrival_time < target_tau_star.time
                     {
                         let boarding_p = boarding_p.get().unwrap_or(SequnceIdx::NONE);
                         let departure_time = get_departure_time(consumer, trip, boarding_p)
@@ -147,6 +148,7 @@ pub fn explore_trip_patterns(
                         buffer.push(Update::new(
                             stop.idx,
                             arrival_time,
+                            arrival_time.0 as f32,
                             Parent::Transit {
                                 boarding_p,
                                 alighting_p: i,
@@ -158,18 +160,22 @@ pub fn explore_trip_patterns(
                     }
 
                     // PART B
-                    let previous_label = state.previous_labels[stop.idx.as_usize()]
-                        .get()
-                        .unwrap_or(Time(u32::MAX));
+                    let previous_label =
+                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
                     let departure_time = active_trip
                         .get()
                         .and_then(|t| get_departure_time(consumer, t, i).get())
                         .unwrap_or(Time(u32::MAX));
 
-                    if previous_label < departure_time
-                        && let Some(earlier_trip) =
-                            find_earliest_trip(consumer, query, trip_pattern.idx, i, previous_label)
-                                .get()
+                    if previous_label.time < departure_time
+                        && let Some(earlier_trip) = find_earliest_trip(
+                            consumer,
+                            query,
+                            trip_pattern.idx,
+                            i,
+                            previous_label.time,
+                        )
+                        .get()
                     {
                         let earlier_departure = get_departure_time(consumer, earlier_trip, i)
                             .get()
@@ -214,27 +220,30 @@ pub fn explore_trip_patterns_reverse(
                     .collect();
 
                 for (i, stop) in stops.into_iter().rev() {
-                    let tau_star = state.tau_star[stop.idx.as_usize()]
-                        .get()
-                        .unwrap_or(Time(u32::MIN));
-                    let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MIN));
+                    let label =
+                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
+                    let tau_star = state.tau_star[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
+                    let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MIN);
 
                     // PART A
                     if let Some(trip) = active_trip.get()
                         && let departure_time = get_departure_time(consumer, trip, i)
                             .get()
                             .unwrap_or(Time(u32::MIN))
-                        && departure_time > tau_star
-                        && departure_time > target_tau_star
+                        && departure_time > tau_star.time
+                        && departure_time > target_tau_star.time
                     {
                         let alighting_p = alighting_p.get().unwrap_or(SequnceIdx::NONE);
                         let arrival_time = get_arrival_time(consumer, trip, alighting_p)
                             .get()
                             .unwrap_or(Time(u32::MIN));
 
+                        let ride_time = arrival_time - departure_time;
+                        let cost = label.cost + ride_time.0 as f32;
                         buffer.push(Update::new(
                             stop.idx,
                             departure_time,
+                            cost,
                             Parent::Transit {
                                 boarding_p: i,
                                 alighting_p,
@@ -246,18 +255,22 @@ pub fn explore_trip_patterns_reverse(
                     }
 
                     // PART B
-                    let previous_label = state.previous_labels[stop.idx.as_usize()]
-                        .get()
-                        .unwrap_or(Time(u32::MIN));
+                    let previous_label =
+                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
                     let arrival_time = active_trip
                         .get()
                         .and_then(|t| get_arrival_time(consumer, t, i).get())
                         .unwrap_or(Time(u32::MIN));
 
-                    if previous_label >= arrival_time
-                        && let Some(latest_trip) =
-                            find_latest_trip(consumer, query, trip_pattern.idx, i, previous_label)
-                                .get()
+                    if previous_label.time >= arrival_time
+                        && let Some(latest_trip) = find_latest_trip(
+                            consumer,
+                            query,
+                            trip_pattern.idx,
+                            i,
+                            previous_label.time,
+                        )
+                        .get()
                     {
                         let later_arrival = get_arrival_time(consumer, latest_trip, i)
                             .get()
@@ -290,10 +303,9 @@ pub fn explore_transfers(
             || Vec::with_capacity(512),
             |mut buffer, (stop_idx, _)| {
                 let stop_idx = StopIdx(stop_idx as u32);
-                let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MAX));
-                let departure_time = state.current_labels[stop_idx.as_usize()]
-                    .get()
-                    .unwrap_or(Time(u32::MAX));
+                let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
+                let departure_time =
+                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MIN);
 
                 // Explicit Transfers
                 consumer
@@ -301,8 +313,7 @@ pub fn explore_transfers(
                     .iter()
                     .for_each(|transfer| {
                         let tau_star = state.tau_star[transfer.to_stop_idx.as_usize()]
-                            .get()
-                            .unwrap_or(Time(u32::MAX));
+                            .unwrap_or(ParetoLabel::MAX);
 
                         let transfer_time = calculate_transfer_time(
                             consumer,
@@ -311,15 +322,16 @@ pub fn explore_transfers(
                             transfer.min_transfer_time,
                         );
 
-                        let arrival_time = Time(departure_time.0 + transfer_time);
+                        let arrival_time = Time(departure_time.time.0 + transfer_time);
 
-                        if arrival_time < tau_star && arrival_time < target_tau_star {
+                        if arrival_time < tau_star.time && arrival_time < target_tau_star.time {
                             buffer.push(Update::new(
                                 transfer.to_stop_idx,
                                 arrival_time,
+                                arrival_time.0 as f32,
                                 Parent::Transfer {
                                     from_stop: transfer.from_stop_idx,
-                                    departure_time: LiveTime::scheduled_only(departure_time),
+                                    departure_time: LiveTime::scheduled_only(departure_time.time),
                                     arrival_time: LiveTime::scheduled_only(arrival_time),
                                 },
                             ));
@@ -333,19 +345,22 @@ pub fn explore_transfers(
                         .filter(|&s| consumer.iter_trips_by_stop(s).count() != 0)
                         .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                         .for_each(|(to_stop, to_coordinate)| {
-                            let tau_star = state.tau_star[to_stop.as_usize()]
-                                .get()
-                                .unwrap_or(Time(u32::MAX));
-                            let arrival_time =
-                                Time(departure_time.0 + time_to_walk(coordinate, to_coordinate).0);
+                            let tau_star =
+                                state.tau_star[to_stop.as_usize()].unwrap_or(ParetoLabel::MAX);
+                            let arrival_time = Time(
+                                departure_time.time.0 + time_to_walk(coordinate, to_coordinate).0,
+                            );
 
-                            if arrival_time < tau_star && arrival_time < target_tau_star {
+                            if arrival_time < tau_star.time && arrival_time < target_tau_star.time {
                                 buffer.push(Update::new(
                                     to_stop,
                                     arrival_time,
+                                    arrival_time.0 as f32,
                                     Parent::Walk {
                                         from_stop: stop_idx,
-                                        departure_time: LiveTime::scheduled_only(departure_time),
+                                        departure_time: LiveTime::scheduled_only(
+                                            departure_time.time,
+                                        ),
                                         arrival_time: LiveTime::scheduled_only(arrival_time),
                                     },
                                 ));
@@ -374,18 +389,16 @@ pub fn explore_transfers_reverse(
             || Vec::with_capacity(512),
             |mut buffer, (stop_idx, _)| {
                 let stop_idx = StopIdx(stop_idx as u32);
-                let target_tau_star = state.target_tau_star.get().unwrap_or(Time(u32::MIN));
-                let arrival_time = state.current_labels[stop_idx.as_usize()]
-                    .get()
-                    .unwrap_or(Time(u32::MIN));
+                let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MIN);
+                let arrival_time =
+                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MIN);
 
                 // Explicit Transfers
                 consumer
                     .iter_inbound_transfers_by_stop(stop_idx)
                     .for_each(|transfer| {
                         let tau_star = state.tau_star[transfer.from_stop_idx.as_usize()]
-                            .get()
-                            .unwrap_or(Time(u32::MIN));
+                            .unwrap_or(ParetoLabel::MIN);
 
                         let transfer_time = calculate_transfer_time(
                             consumer,
@@ -394,17 +407,20 @@ pub fn explore_transfers_reverse(
                             transfer.min_transfer_time,
                         );
 
-                        if arrival_time.0 >= transfer_time {
-                            let departure_time = Time(arrival_time.0 - transfer_time);
+                        if arrival_time.time.0 >= transfer_time {
+                            let departure_time = Time(arrival_time.time.0 - transfer_time);
 
-                            if departure_time > tau_star && departure_time > target_tau_star {
+                            if departure_time > tau_star.time
+                                && departure_time > target_tau_star.time
+                            {
                                 buffer.push(Update::new(
                                     transfer.from_stop_idx,
                                     departure_time,
+                                    departure_time.0 as f32,
                                     Parent::Transfer {
                                         from_stop: stop_idx,
                                         departure_time: LiveTime::scheduled_only(departure_time),
-                                        arrival_time: LiveTime::scheduled_only(arrival_time),
+                                        arrival_time: LiveTime::scheduled_only(arrival_time.time),
                                     },
                                 ));
                             }
@@ -418,23 +434,27 @@ pub fn explore_transfers_reverse(
                         .filter(|&s| consumer.iter_trips_by_stop(s).count() != 0)
                         .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                         .for_each(|(other_stop, other_coordinate)| {
-                            let tau_star = state.tau_star[other_stop.as_usize()]
-                                .get()
-                                .unwrap_or(Time(u32::MIN));
+                            let tau_star =
+                                state.tau_star[other_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
                             let walk_time = time_to_walk(coordinate, other_coordinate).0;
 
-                            if arrival_time.0 >= walk_time {
-                                let departure_time = Time(arrival_time.0 - walk_time);
-                                if departure_time > tau_star && departure_time > target_tau_star {
+                            if arrival_time.time.0 >= walk_time {
+                                let departure_time = Time(arrival_time.time.0 - walk_time);
+                                if departure_time > tau_star.time
+                                    && departure_time > target_tau_star.time
+                                {
                                     buffer.push(Update::new(
                                         other_stop,
                                         departure_time,
+                                        departure_time.0 as f32,
                                         Parent::Walk {
                                             from_stop: stop_idx,
                                             departure_time: LiveTime::scheduled_only(
                                                 departure_time,
                                             ),
-                                            arrival_time: LiveTime::scheduled_only(arrival_time),
+                                            arrival_time: LiveTime::scheduled_only(
+                                                arrival_time.time,
+                                            ),
                                         },
                                     ));
                                 }
