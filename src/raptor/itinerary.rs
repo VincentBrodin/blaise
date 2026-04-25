@@ -69,8 +69,17 @@ impl Itinerary {
             };
 
             if first_leg_from != first_leg_to {
-                let stop_time = state.tau_star[best_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
-                let target_time = state.target_tau_star.unwrap_or(stop_time);
+                let stop_time = state.tau_star[best_stop.as_usize()]
+                    .iter()
+                    .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap())
+                    .copied()
+                    .unwrap_or(ParetoLabel::MIN);
+                let target_time = state
+                    .target_tau_star
+                    .iter()
+                    .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap())
+                    .copied()
+                    .unwrap_or(stop_time);
 
                 // For Departure: Stop -> Destination (arr_t is target_tau_star)
                 // For Arrival: Origin -> Stop (dep_t is target_tau_star)
@@ -194,7 +203,11 @@ impl Itinerary {
             // ==========================================
             let (last_leg_from, last_leg_to, last_dep, last_arr) = match query.time_direction {
                 query::TimeDirection::Departure(dep_t) => {
-                    let arr_t = state.tau_star[current_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
+                    let arr_t = state.tau_star[current_stop.as_usize()]
+                        .iter()
+                        .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap())
+                        .copied()
+                        .unwrap_or(ParetoLabel::MIN);
                     (
                         query.origin.resolve(current_stop),
                         Location::Stop(current_stop),
@@ -203,7 +216,11 @@ impl Itinerary {
                     )
                 }
                 query::TimeDirection::Arrival(arr_t) => {
-                    let dep_t = state.tau_star[current_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
+                    let dep_t = state.tau_star[current_stop.as_usize()]
+                        .iter()
+                        .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap())
+                        .copied()
+                        .unwrap_or(ParetoLabel::MIN);
                     (
                         Location::Stop(current_stop),
                         query.destination.resolve(current_stop),

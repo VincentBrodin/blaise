@@ -23,6 +23,9 @@ pub mod itinerary;
 pub mod query;
 pub mod state;
 
+const MAX_ROUNDS: usize = 15;
+const FRONT_SIZE: usize = 4;
+
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SequnceIdx(u32);
@@ -39,8 +42,8 @@ impl SequnceIdx {
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct ParetoLabel {
-    time: Time,
-    cost: f32,
+    pub time: Time,
+    pub cost: f32,
 }
 
 impl ParetoLabel {
@@ -56,6 +59,80 @@ impl ParetoLabel {
 
     pub fn new(time: Time, cost: f32) -> Self {
         Self { time, cost }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ParetoFront(smallvec::SmallVec<[ParetoLabel; FRONT_SIZE]>);
+
+impl ParetoFront {
+    #[inline]
+    pub fn new() -> Self {
+        Self(smallvec::SmallVec::new())
+    }
+
+    /// Returns `true` if `(time, cost)` is dominated by any label already on the front.
+    #[inline]
+    pub fn is_dominated(&self, time: Time, cost: f32, is_arrival: bool) -> bool {
+        self.0.iter().any(|l| {
+            let time_ok = if is_arrival {
+                l.time >= time
+            } else {
+                l.time <= time
+            };
+            time_ok && l.cost <= cost
+        })
+    }
+
+    /// Add a label if it is not dominated. Remove any labels the new one dominates.
+    /// Returns `true` if the label was accepted.
+    #[inline]
+    pub fn add(&mut self, label: ParetoLabel, is_arrival: bool) -> bool {
+        if self.is_dominated(label.time, label.cost, is_arrival) {
+            return false;
+        }
+        // Remove labels that the new label dominates.
+        self.0.retain(|l| {
+            let time_ok = if is_arrival {
+                label.time >= l.time
+            } else {
+                label.time <= l.time
+            };
+            !(time_ok && label.cost <= l.cost)
+        });
+        self.0.push(label);
+        true
+    }
+
+    /// Minimum cost across all labels. `f32::MAX` if empty.
+    #[inline]
+    pub fn best_cost(&self) -> f32 {
+        self.0.iter().fold(f32::MAX, |acc, l| acc.min(l.cost))
+    }
+
+    /// Best time: earliest for forward, latest for reverse. `None` if empty.
+    #[inline]
+    pub fn best_time(&self, is_arrival: bool) -> Option<Time> {
+        if is_arrival {
+            self.0.iter().map(|l| l.time).max()
+        } else {
+            self.0.iter().map(|l| l.time).min()
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &ParetoLabel> {
+        self.0.iter()
     }
 }
 
@@ -120,8 +197,6 @@ impl Update {
     }
 }
 
-const MAX_ROUNDS: usize = 15;
-
 pub fn solve(
     query: RaptorQuery,
     consumer: &Consumer,
@@ -161,19 +236,20 @@ fn solve_core(
 ) -> Result<Itinerary, crate::Error> {
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
+            let init_label = ParetoLabel::new(time, 0.0);
             match query.destination {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
-                    state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
-                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                    state.current_labels[stop.as_usize()].add(init_label, true);
+                    state.tau_star[stop.as_usize()].add(init_label, true);
                     let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
                 QueryLocation::Stops(stops) => {
                     for stop in stops.iter().copied() {
                         state.marked_stops[stop.as_usize()] = true;
-                        state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
-                        state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                        state.current_labels[stop.as_usize()].add(init_label, true);
+                        state.tau_star[stop.as_usize()].add(init_label, true);
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }
@@ -186,11 +262,10 @@ fn solve_core(
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 - time_to_walk.0);
                         let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost);
                         state.marked_stops[stop.as_usize()] = true;
-                        state.current_labels[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, walk_cost));
-                        state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, walk_cost));
+                        state.current_labels[stop.as_usize()].add(label, true);
+                        state.tau_star[stop.as_usize()].add(label, true);
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
@@ -222,11 +297,12 @@ fn solve_core(
             }
         }
         query::TimeDirection::Departure(time) => {
+            let init_label = ParetoLabel::new(time, 0.0);
             match query.origin {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
-                    state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
-                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                    state.current_labels[stop.as_usize()].add(init_label, false);
+                    state.tau_star[stop.as_usize()].add(init_label, false);
 
                     let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
@@ -234,8 +310,8 @@ fn solve_core(
                 QueryLocation::Stops(stops) => {
                     for stop in stops.iter().copied() {
                         state.marked_stops[stop.as_usize()] = true;
-                        state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
-                        state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                        state.current_labels[stop.as_usize()].add(init_label, false);
+                        state.tau_star[stop.as_usize()].add(init_label, false);
 
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
@@ -249,11 +325,10 @@ fn solve_core(
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 + time_to_walk.0);
                         let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost);
                         state.marked_stops[stop.as_usize()] = true;
-                        state.current_labels[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, walk_cost));
-                        state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, walk_cost));
+                        state.current_labels[stop.as_usize()].add(label, false);
+                        state.tau_star[stop.as_usize()].add(label, false);
 
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
@@ -281,6 +356,8 @@ fn solve_core(
         }
     }
 
+    let is_arrival = matches!(query.time_direction, query::TimeDirection::Arrival(_));
+
     let updates = match query.time_direction {
         query::TimeDirection::Arrival(_) => {
             explore_transfers_reverse(query, consumer, spatial, state)
@@ -288,19 +365,24 @@ fn solve_core(
         query::TimeDirection::Departure(_) => explore_transfers(query, consumer, spatial, state),
     };
 
-    state.apply_updates(0, &updates);
+    state.apply_updates(0, is_arrival, &updates);
 
+    // Evaluate whether any target stop is already reachable (round 0 walk).
     for (target_stop, duration) in state.target_stops.iter() {
-        if let Some(label) = state.current_labels[target_stop.as_usize()] {
-            let true_time = match query.time_direction {
-                query::TimeDirection::Arrival(_) => Time(label.time.0 - duration.0),
-                query::TimeDirection::Departure(_) => Time(label.time.0 + duration.0),
+        for label in state.current_labels[target_stop.as_usize()].iter() {
+            let true_time = if is_arrival {
+                Time(label.time.0 - duration.0)
+            } else {
+                Time(label.time.0 + duration.0)
             };
-            // 0.0 is a placeholder for initial evaluation,
-            // since target_tau_star gets overridden by the round loop anyway.
-            state.target_tau_star = Some(ParetoLabel::new(true_time, f32::MAX));
-            state.target_best_stop = Opt::new(*target_stop);
-            state.target_best_round = Some(0);
+            let true_cost = label.cost + duration.0 as f32 * query.walk_penalty;
+            let new_label = ParetoLabel::new(true_time, true_cost);
+            if state.target_tau_star.add(new_label, is_arrival)
+                && true_cost <= state.target_tau_star.best_cost()
+            {
+                state.target_best_stop = Opt::new(*target_stop);
+                state.target_best_round = Some(0);
+            }
         }
     }
 
@@ -310,7 +392,7 @@ fn solve_core(
         }
 
         mem::swap(&mut state.current_labels, &mut state.previous_labels);
-        state.current_labels.fill(None);
+        state.current_labels.iter_mut().for_each(|f| f.clear());
 
         state
             .active_trip_patterns
@@ -361,47 +443,32 @@ fn solve_core(
         match query.time_direction {
             query::TimeDirection::Arrival(_) => {
                 let updates = explore_trip_patterns_reverse(query, consumer, state);
-                state.apply_updates(round, &updates);
+                state.apply_updates(round, is_arrival, &updates);
 
                 let updates = explore_transfers_reverse(query, consumer, spatial, state);
-                state.apply_updates(round, &updates);
+                state.apply_updates(round, is_arrival, &updates);
             }
             query::TimeDirection::Departure(_) => {
                 let updates = explore_trip_patterns(query, consumer, state);
-                state.apply_updates(round, &updates);
+                state.apply_updates(round, is_arrival, &updates);
 
                 let updates = explore_transfers(query, consumer, spatial, state);
-                state.apply_updates(round, &updates);
+                state.apply_updates(round, is_arrival, &updates);
             }
         }
 
         for (target_stop, duration) in state.target_stops.iter() {
-            if let Some(label) = state.current_labels[target_stop.as_usize()] {
-                let current_best = state.target_tau_star;
-                let true_time = match query.time_direction {
-                    query::TimeDirection::Arrival(_) => Time(label.time.0 - duration.0),
-                    query::TimeDirection::Departure(_) => Time(label.time.0 + duration.0),
+            for label in state.current_labels[target_stop.as_usize()].iter() {
+                let true_time = if is_arrival {
+                    Time(label.time.0 - duration.0)
+                } else {
+                    Time(label.time.0 + duration.0)
                 };
                 let true_cost = label.cost + duration.0 as f32 * query.walk_penalty;
-
-                let improvement = match current_best {
-                    None => true,
-                    Some(best) => {
-                        if true_cost < best.cost {
-                            true
-                        } else if true_cost == best.cost {
-                            match query.time_direction {
-                                query::TimeDirection::Arrival(_) => true_time > best.time,
-                                query::TimeDirection::Departure(_) => true_time < best.time,
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-                if improvement {
-                    state.target_tau_star = Some(ParetoLabel::new(true_time, true_cost));
+                let new_label = ParetoLabel::new(true_time, true_cost);
+                if state.target_tau_star.add(new_label, is_arrival)
+                    && true_cost <= state.target_tau_star.best_cost()
+                {
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
                 }
