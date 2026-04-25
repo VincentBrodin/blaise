@@ -51,7 +51,7 @@ impl ParetoLabel {
 
     pub const MIN: Self = Self {
         time: Time(u32::MIN),
-        cost: f32::MIN,
+        cost: f32::MAX,
     };
 
     pub fn new(time: Time, cost: f32) -> Self {
@@ -141,6 +141,9 @@ pub fn solve(
             time_direction: query::TimeDirection::Departure(optimal_departure),
             search_radius: query.search_radius,
             date: query.date,
+            transit_penalty: query.transit_penalty,
+            transfer_penalty: query.transfer_penalty,
+            walk_penalty: query.walk_penalty,
         };
 
         state.reset();
@@ -161,9 +164,8 @@ fn solve_core(
             match query.destination {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
-                    state.current_labels[stop.as_usize()] =
-                        Some(ParetoLabel::new(time, time.0 as f32));
-                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, time.0 as f32));
+                    state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
                     let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
@@ -171,8 +173,7 @@ fn solve_core(
                     for stop in stops.iter().copied() {
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
-                        state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(time, time.0 as f32));
+                        state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }
@@ -184,11 +185,12 @@ fn solve_core(
                     .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 - time_to_walk.0);
+                        let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, arr_time.0 as f32));
+                            Some(ParetoLabel::new(arr_time, walk_cost));
                         state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(time, time.0 as f32));
+                            Some(ParetoLabel::new(arr_time, walk_cost));
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
@@ -223,9 +225,8 @@ fn solve_core(
             match query.origin {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
-                    state.current_labels[stop.as_usize()] =
-                        Some(ParetoLabel::new(time, time.0 as f32));
-                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, time.0 as f32));
+                    state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                    state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
 
                     let parent_idx = state.calc_parent_idx(0, stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
@@ -233,10 +234,8 @@ fn solve_core(
                 QueryLocation::Stops(stops) => {
                     for stop in stops.iter().copied() {
                         state.marked_stops[stop.as_usize()] = true;
-                        state.current_labels[stop.as_usize()] =
-                            Some(ParetoLabel::new(time, time.0 as f32));
-                        state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(time, time.0 as f32));
+                        state.current_labels[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
+                        state.tau_star[stop.as_usize()] = Some(ParetoLabel::new(time, 0.0));
 
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
@@ -249,11 +248,12 @@ fn solve_core(
                     .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(coordinate, to_coordinate);
                         let arr_time = Time(time.0 + time_to_walk.0);
+                        let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, arr_time.0 as f32));
+                            Some(ParetoLabel::new(arr_time, walk_cost));
                         state.tau_star[stop.as_usize()] =
-                            Some(ParetoLabel::new(arr_time, time.0 as f32));
+                            Some(ParetoLabel::new(arr_time, walk_cost));
 
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
@@ -288,14 +288,16 @@ fn solve_core(
         query::TimeDirection::Departure(_) => explore_transfers(query, consumer, spatial, state),
     };
 
-    state.apply_updates(0, query.time_direction, &updates);
+    state.apply_updates(0, &updates);
 
     for (target_stop, duration) in state.target_stops.iter() {
-        if let Some(label_time) = state.current_labels[target_stop.as_usize()] {
+        if let Some(label) = state.current_labels[target_stop.as_usize()] {
             let true_time = match query.time_direction {
-                query::TimeDirection::Arrival(_) => Time(label_time.time.0 - duration.0),
-                query::TimeDirection::Departure(_) => Time(label_time.time.0 + duration.0),
+                query::TimeDirection::Arrival(_) => Time(label.time.0 - duration.0),
+                query::TimeDirection::Departure(_) => Time(label.time.0 + duration.0),
             };
+            // 0.0 is a placeholder for initial evaluation,
+            // since target_tau_star gets overridden by the round loop anyway.
             state.target_tau_star = Some(ParetoLabel::new(true_time, f32::MAX));
             state.target_best_stop = Opt::new(*target_stop);
             state.target_best_round = Some(0);
@@ -359,38 +361,47 @@ fn solve_core(
         match query.time_direction {
             query::TimeDirection::Arrival(_) => {
                 let updates = explore_trip_patterns_reverse(query, consumer, state);
-                state.apply_updates(round, query.time_direction, &updates);
+                state.apply_updates(round, &updates);
 
                 let updates = explore_transfers_reverse(query, consumer, spatial, state);
-                state.apply_updates(round, query.time_direction, &updates);
+                state.apply_updates(round, &updates);
             }
             query::TimeDirection::Departure(_) => {
                 let updates = explore_trip_patterns(query, consumer, state);
-                state.apply_updates(round, query.time_direction, &updates);
+                state.apply_updates(round, &updates);
 
                 let updates = explore_transfers(query, consumer, spatial, state);
-                state.apply_updates(round, query.time_direction, &updates);
+                state.apply_updates(round, &updates);
             }
         }
 
         for (target_stop, duration) in state.target_stops.iter() {
-            if let Some(label_time) = state.current_labels[target_stop.as_usize()] {
+            if let Some(label) = state.current_labels[target_stop.as_usize()] {
                 let current_best = state.target_tau_star;
                 let true_time = match query.time_direction {
-                    query::TimeDirection::Arrival(_) => Time(label_time.time.0 - duration.0),
-                    query::TimeDirection::Departure(_) => Time(label_time.time.0 + duration.0),
+                    query::TimeDirection::Arrival(_) => Time(label.time.0 - duration.0),
+                    query::TimeDirection::Departure(_) => Time(label.time.0 + duration.0),
                 };
+                let true_cost = label.cost + duration.0 as f32 * query.walk_penalty;
 
                 let improvement = match current_best {
                     None => true,
-                    Some(best) => match query.time_direction {
-                        query::TimeDirection::Arrival(_) => true_time > best.time,
-                        query::TimeDirection::Departure(_) => true_time < best.time,
-                    },
+                    Some(best) => {
+                        if true_cost < best.cost {
+                            true
+                        } else if true_cost == best.cost {
+                            match query.time_direction {
+                                query::TimeDirection::Arrival(_) => true_time > best.time,
+                                query::TimeDirection::Departure(_) => true_time < best.time,
+                            }
+                        } else {
+                            false
+                        }
+                    }
                 };
 
                 if improvement {
-                    state.target_tau_star = Some(ParetoLabel::new(true_time, 0.0));
+                    state.target_tau_star = Some(ParetoLabel::new(true_time, true_cost));
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
                 }

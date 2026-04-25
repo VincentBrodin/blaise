@@ -3,7 +3,7 @@ use gtfs_bin::{
     models::{Duration, Opt, Sentinel, StopIdx},
 };
 
-use crate::raptor::{MAX_ROUNDS, Parent, ParetoLabel, SequnceIdx, Update, query::TimeDirection};
+use crate::raptor::{MAX_ROUNDS, Parent, ParetoLabel, SequnceIdx, Update};
 
 pub struct State {
     pub tau_star: Vec<Option<ParetoLabel>>,
@@ -53,34 +53,14 @@ impl State {
         self.parents.fill(None);
     }
 
-    pub fn apply_updates(
-        &mut self,
-        round: usize,
-        time_direction: TimeDirection,
-        updates: &[Update],
-    ) {
-        let is_arrival = match time_direction {
-            TimeDirection::Arrival(_) => true,
-            TimeDirection::Departure(_) => false,
-        };
-        let target_tau_star = self.target_tau_star.unwrap_or(if is_arrival {
-            ParetoLabel::MIN
-        } else {
-            ParetoLabel::MAX
-        });
-
+    pub fn apply_updates(&mut self, round: usize, updates: &[Update]) {
         for update in updates {
-            let tau_star = self.tau_star[update.stop.as_usize()].unwrap_or(if is_arrival {
-                ParetoLabel::MIN
-            } else {
-                ParetoLabel::MAX
-            });
+            let tau_star = self.tau_star[update.stop.as_usize()].unwrap_or(ParetoLabel::MAX);
+            let target_tau_star = self.target_tau_star.unwrap_or(ParetoLabel::MAX);
 
-            let improved = if is_arrival {
-                update.time > tau_star.time && update.time > target_tau_star.time
-            } else {
-                update.time < tau_star.time && update.time < target_tau_star.time
-            };
+            // Primary criterion: cost must strictly improve on both the stop's
+            // best-known label and the overall target best.
+            let improved = update.cost < tau_star.cost && update.cost < target_tau_star.cost;
 
             if improved {
                 self.current_labels[update.stop.as_usize()] =

@@ -72,6 +72,10 @@ pub struct RaptorQuery<'a> {
     pub time_direction: TimeDirection,
     pub date: Date,
     pub search_radius: f64,
+
+    pub transit_penalty: f32,
+    pub transfer_penalty: f32,
+    pub walk_penalty: f32,
 }
 
 impl<'a> RaptorQuery<'a> {
@@ -88,6 +92,10 @@ impl<'a> RaptorQuery<'a> {
             time_direction: TimeDirection::Departure(time),
             search_radius: 1500.0,
             date,
+
+            transit_penalty: 1.0,
+            transfer_penalty: 1.5,
+            walk_penalty: 2.0,
         }
     }
 

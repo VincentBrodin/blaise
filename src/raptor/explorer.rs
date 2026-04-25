@@ -120,6 +120,8 @@ pub fn explore_trip_patterns(
 
                 let mut active_trip = Opt::new(TripIdx::NONE);
                 let mut boarding_p = Opt::new(SequnceIdx::NONE);
+                // Cost accumulated up to the boarding stop.
+                let mut boarding_cost: f32 = f32::MAX;
 
                 for (i, stop) in consumer
                     .iter_stop_sequence_by_trip_pattern(trip_pattern_idx)
@@ -129,45 +131,48 @@ pub fn explore_trip_patterns(
                 {
                     let tau_star = state.tau_star[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
                     let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
-                    let label =
-                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
 
-                    // PART A
+                    // PART A: emit an update for the current alighting stop.
                     if let Some(trip) = active_trip.get()
                         && let arrival_time = get_arrival_time(consumer, trip, i)
                             .get()
                             .unwrap_or(Time(u32::MAX))
                         && arrival_time < tau_star.time
-                        && arrival_time < target_tau_star.time
                     {
-                        let boarding_p = boarding_p.get().unwrap_or(SequnceIdx::NONE);
-                        let departure_time = get_departure_time(consumer, trip, boarding_p)
+                        let boarding_p_val = boarding_p.get().unwrap_or(SequnceIdx::NONE);
+                        let departure_time = get_departure_time(consumer, trip, boarding_p_val)
                             .get()
                             .unwrap_or(Time(u32::MAX));
+                        let ride_time = (arrival_time - departure_time).0 as f32;
+                        let prospective_cost = boarding_cost + ride_time * query.transit_penalty;
 
-                        buffer.push(Update::new(
-                            stop.idx,
-                            arrival_time,
-                            arrival_time.0 as f32,
-                            Parent::Transit {
-                                boarding_p,
-                                alighting_p: i,
-                                trip,
-                                departure_time: LiveTime::scheduled_only(departure_time),
-                                arrival_time: LiveTime::scheduled_only(arrival_time),
-                            },
-                        ));
+                        if prospective_cost < tau_star.cost
+                            && prospective_cost < target_tau_star.cost
+                        {
+                            buffer.push(Update::new(
+                                stop.idx,
+                                arrival_time,
+                                prospective_cost,
+                                Parent::Transit {
+                                    boarding_p: boarding_p_val,
+                                    alighting_p: i,
+                                    trip,
+                                    departure_time: LiveTime::scheduled_only(departure_time),
+                                    arrival_time: LiveTime::scheduled_only(arrival_time),
+                                },
+                            ));
+                        }
                     }
 
-                    // PART B
+                    // PART B: consider boarding at this stop if we can do so earlier/cheaper.
                     let previous_label =
                         state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
-                    let departure_time = active_trip
+                    let current_departure = active_trip
                         .get()
                         .and_then(|t| get_departure_time(consumer, t, i).get())
                         .unwrap_or(Time(u32::MAX));
 
-                    if previous_label.time < departure_time
+                    if previous_label.time < current_departure
                         && let Some(earlier_trip) = find_earliest_trip(
                             consumer,
                             query,
@@ -180,9 +185,11 @@ pub fn explore_trip_patterns(
                         let earlier_departure = get_departure_time(consumer, earlier_trip, i)
                             .get()
                             .unwrap_or(Time(u32::MAX));
-                        if earlier_departure < departure_time {
+                        if earlier_departure < current_departure {
                             active_trip = Opt::new(earlier_trip);
                             boarding_p = Opt::new(i);
+                            let wait = (earlier_departure - previous_label.time).0 as f32;
+                            boarding_cost = previous_label.cost + wait * query.transit_penalty;
                         }
                     }
                 }
@@ -211,6 +218,7 @@ pub fn explore_trip_patterns_reverse(
 
                 let mut active_trip = Opt::new(TripIdx::NONE);
                 let mut alighting_p = Opt::new(SequnceIdx::NONE);
+                let mut alighting_cost: f32 = f32::MAX;
 
                 let stops: Vec<_> = consumer
                     .iter_stop_sequence_by_trip_pattern(trip_pattern_idx)
@@ -220,49 +228,51 @@ pub fn explore_trip_patterns_reverse(
                     .collect();
 
                 for (i, stop) in stops.into_iter().rev() {
-                    let label =
-                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
-                    let tau_star = state.tau_star[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
-                    let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MIN);
+                    let tau_star = state.tau_star[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
+                    let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
 
-                    // PART A
+                    // PART A: emit an update for the current boarding stop.
                     if let Some(trip) = active_trip.get()
                         && let departure_time = get_departure_time(consumer, trip, i)
                             .get()
                             .unwrap_or(Time(u32::MIN))
                         && departure_time > tau_star.time
-                        && departure_time > target_tau_star.time
                     {
-                        let alighting_p = alighting_p.get().unwrap_or(SequnceIdx::NONE);
-                        let arrival_time = get_arrival_time(consumer, trip, alighting_p)
+                        let alighting_p_val = alighting_p.get().unwrap_or(SequnceIdx::NONE);
+                        let arrival_time = get_arrival_time(consumer, trip, alighting_p_val)
                             .get()
                             .unwrap_or(Time(u32::MIN));
 
-                        let ride_time = arrival_time - departure_time;
-                        let cost = label.cost + ride_time.0 as f32;
-                        buffer.push(Update::new(
-                            stop.idx,
-                            departure_time,
-                            cost,
-                            Parent::Transit {
-                                boarding_p: i,
-                                alighting_p,
-                                trip,
-                                departure_time: LiveTime::scheduled_only(departure_time),
-                                arrival_time: LiveTime::scheduled_only(arrival_time),
-                            },
-                        ));
+                        let ride_time = (arrival_time - departure_time).0 as f32;
+                        let prospective_cost = alighting_cost + ride_time * query.transit_penalty;
+
+                        if prospective_cost < tau_star.cost
+                            && prospective_cost < target_tau_star.cost
+                        {
+                            buffer.push(Update::new(
+                                stop.idx,
+                                departure_time,
+                                prospective_cost,
+                                Parent::Transit {
+                                    boarding_p: i,
+                                    alighting_p: alighting_p_val,
+                                    trip,
+                                    departure_time: LiveTime::scheduled_only(departure_time),
+                                    arrival_time: LiveTime::scheduled_only(arrival_time),
+                                },
+                            ));
+                        }
                     }
 
-                    // PART B
+                    // PART B: consider alighting at this stop if we can find a later trip.
                     let previous_label =
-                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MIN);
-                    let arrival_time = active_trip
+                        state.previous_labels[stop.idx.as_usize()].unwrap_or(ParetoLabel::MAX);
+                    let current_arrival = active_trip
                         .get()
                         .and_then(|t| get_arrival_time(consumer, t, i).get())
                         .unwrap_or(Time(u32::MIN));
 
-                    if previous_label.time >= arrival_time
+                    if previous_label.time >= current_arrival
                         && let Some(latest_trip) = find_latest_trip(
                             consumer,
                             query,
@@ -275,9 +285,11 @@ pub fn explore_trip_patterns_reverse(
                         let later_arrival = get_arrival_time(consumer, latest_trip, i)
                             .get()
                             .unwrap_or(Time(u32::MIN));
-                        if active_trip.is_none() || later_arrival > arrival_time {
+                        if active_trip.is_none() || later_arrival > current_arrival {
                             active_trip = Opt::new(latest_trip);
                             alighting_p = Opt::new(i);
+                            let wait = (previous_label.time - later_arrival).0 as f32;
+                            alighting_cost = previous_label.cost + wait * query.transit_penalty;
                         }
                     }
                 }
@@ -304,8 +316,8 @@ pub fn explore_transfers(
             |mut buffer, (stop_idx, _)| {
                 let stop_idx = StopIdx(stop_idx as u32);
                 let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
-                let departure_time =
-                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MIN);
+                let current_label =
+                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MAX);
 
                 // Explicit Transfers
                 consumer
@@ -322,16 +334,18 @@ pub fn explore_transfers(
                             transfer.min_transfer_time,
                         );
 
-                        let arrival_time = Time(departure_time.time.0 + transfer_time);
+                        let arrival_time = Time(current_label.time.0 + transfer_time);
+                        let transfer_cost =
+                            current_label.cost + transfer_time as f32 * query.transfer_penalty;
 
-                        if arrival_time < tau_star.time && arrival_time < target_tau_star.time {
+                        if transfer_cost < tau_star.cost && transfer_cost < target_tau_star.cost {
                             buffer.push(Update::new(
                                 transfer.to_stop_idx,
                                 arrival_time,
-                                arrival_time.0 as f32,
+                                transfer_cost,
                                 Parent::Transfer {
                                     from_stop: transfer.from_stop_idx,
-                                    departure_time: LiveTime::scheduled_only(departure_time.time),
+                                    departure_time: LiveTime::scheduled_only(current_label.time),
                                     arrival_time: LiveTime::scheduled_only(arrival_time),
                                 },
                             ));
@@ -347,19 +361,20 @@ pub fn explore_transfers(
                         .for_each(|(to_stop, to_coordinate)| {
                             let tau_star =
                                 state.tau_star[to_stop.as_usize()].unwrap_or(ParetoLabel::MAX);
-                            let arrival_time = Time(
-                                departure_time.time.0 + time_to_walk(coordinate, to_coordinate).0,
-                            );
+                            let walk_time = time_to_walk(coordinate, to_coordinate).0;
+                            let arrival_time = Time(current_label.time.0 + walk_time);
+                            let walk_cost =
+                                current_label.cost + walk_time as f32 * query.walk_penalty;
 
-                            if arrival_time < tau_star.time && arrival_time < target_tau_star.time {
+                            if walk_cost < tau_star.cost && walk_cost < target_tau_star.cost {
                                 buffer.push(Update::new(
                                     to_stop,
                                     arrival_time,
-                                    arrival_time.0 as f32,
+                                    walk_cost,
                                     Parent::Walk {
                                         from_stop: stop_idx,
                                         departure_time: LiveTime::scheduled_only(
-                                            departure_time.time,
+                                            current_label.time,
                                         ),
                                         arrival_time: LiveTime::scheduled_only(arrival_time),
                                     },
@@ -389,16 +404,16 @@ pub fn explore_transfers_reverse(
             || Vec::with_capacity(512),
             |mut buffer, (stop_idx, _)| {
                 let stop_idx = StopIdx(stop_idx as u32);
-                let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MIN);
-                let arrival_time =
-                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MIN);
+                let target_tau_star = state.target_tau_star.unwrap_or(ParetoLabel::MAX);
+                let current_label =
+                    state.current_labels[stop_idx.as_usize()].unwrap_or(ParetoLabel::MAX);
 
                 // Explicit Transfers
                 consumer
                     .iter_inbound_transfers_by_stop(stop_idx)
                     .for_each(|transfer| {
                         let tau_star = state.tau_star[transfer.from_stop_idx.as_usize()]
-                            .unwrap_or(ParetoLabel::MIN);
+                            .unwrap_or(ParetoLabel::MAX);
 
                         let transfer_time = calculate_transfer_time(
                             consumer,
@@ -407,23 +422,24 @@ pub fn explore_transfers_reverse(
                             transfer.min_transfer_time,
                         );
 
-                        if arrival_time.time.0 >= transfer_time {
-                            let departure_time = Time(arrival_time.time.0 - transfer_time);
+                        let transfer_cost =
+                            current_label.cost + transfer_time as f32 * query.transfer_penalty;
 
-                            if departure_time > tau_star.time
-                                && departure_time > target_tau_star.time
-                            {
-                                buffer.push(Update::new(
-                                    transfer.from_stop_idx,
-                                    departure_time,
-                                    departure_time.0 as f32,
-                                    Parent::Transfer {
-                                        from_stop: stop_idx,
-                                        departure_time: LiveTime::scheduled_only(departure_time),
-                                        arrival_time: LiveTime::scheduled_only(arrival_time.time),
-                                    },
-                                ));
-                            }
+                        if transfer_cost < tau_star.cost
+                            && transfer_cost < target_tau_star.cost
+                            && current_label.time.0 >= transfer_time
+                        {
+                            let departure_time = Time(current_label.time.0 - transfer_time);
+                            buffer.push(Update::new(
+                                transfer.from_stop_idx,
+                                departure_time,
+                                transfer_cost,
+                                Parent::Transfer {
+                                    from_stop: stop_idx,
+                                    departure_time: LiveTime::scheduled_only(departure_time),
+                                    arrival_time: LiveTime::scheduled_only(current_label.time),
+                                },
+                            ));
                         }
                     });
 
@@ -435,29 +451,26 @@ pub fn explore_transfers_reverse(
                         .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                         .for_each(|(other_stop, other_coordinate)| {
                             let tau_star =
-                                state.tau_star[other_stop.as_usize()].unwrap_or(ParetoLabel::MIN);
+                                state.tau_star[other_stop.as_usize()].unwrap_or(ParetoLabel::MAX);
                             let walk_time = time_to_walk(coordinate, other_coordinate).0;
+                            let walk_cost =
+                                current_label.cost + walk_time as f32 * query.walk_penalty;
 
-                            if arrival_time.time.0 >= walk_time {
-                                let departure_time = Time(arrival_time.time.0 - walk_time);
-                                if departure_time > tau_star.time
-                                    && departure_time > target_tau_star.time
-                                {
-                                    buffer.push(Update::new(
-                                        other_stop,
-                                        departure_time,
-                                        departure_time.0 as f32,
-                                        Parent::Walk {
-                                            from_stop: stop_idx,
-                                            departure_time: LiveTime::scheduled_only(
-                                                departure_time,
-                                            ),
-                                            arrival_time: LiveTime::scheduled_only(
-                                                arrival_time.time,
-                                            ),
-                                        },
-                                    ));
-                                }
+                            if walk_cost < tau_star.cost
+                                && walk_cost < target_tau_star.cost
+                                && current_label.time.0 >= walk_time
+                            {
+                                let departure_time = Time(current_label.time.0 - walk_time);
+                                buffer.push(Update::new(
+                                    other_stop,
+                                    departure_time,
+                                    walk_cost,
+                                    Parent::Walk {
+                                        from_stop: stop_idx,
+                                        departure_time: LiveTime::scheduled_only(departure_time),
+                                        arrival_time: LiveTime::scheduled_only(current_label.time),
+                                    },
+                                ));
                             }
                         });
                 }
