@@ -237,16 +237,20 @@ fn solve_core(
     match query.time_direction {
         query::TimeDirection::Arrival(time) => {
             let init_label = ParetoLabel::new(time, 0.0);
-            match query.destination {
+            match &query.destination {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
                     state.current_labels[stop.as_usize()].add(init_label, true);
                     state.tau_star[stop.as_usize()].add(init_label, true);
-                    let parent_idx = state.calc_parent_idx(0, stop);
+                    let parent_idx = state.calc_parent_idx(0, *stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
                 QueryLocation::Stops(stops) => {
-                    for stop in stops.iter().copied() {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()].add(init_label, true);
                         state.tau_star[stop.as_usize()].add(init_label, true);
@@ -255,11 +259,11 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
-                        let time_to_walk = time_to_walk(coordinate, to_coordinate);
+                        let time_to_walk = time_to_walk(*coordinate, to_coordinate);
                         let arr_time = Time(time.0 - time_to_walk.0);
                         let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
                         let label = ParetoLabel::new(arr_time, walk_cost);
@@ -271,17 +275,21 @@ fn solve_core(
                     }),
             };
 
-            match query.origin {
+            match &query.origin {
                 QueryLocation::Stop(stop) => {
-                    state.target_stops.push((stop, Duration(0)));
+                    state.target_stops.push((*stop, Duration(0)));
                 }
                 QueryLocation::Stops(stops) => {
-                    for stop in stops.iter().copied() {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
                         state.target_stops.push((stop, Duration(0)));
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
                     .filter_map(|stop_idx| {
                         consumer
@@ -291,24 +299,28 @@ fn solve_core(
                             .map(|c| (stop_idx, c))
                     })
                     .for_each(|(stop_idx, to_coordinate)| {
-                        let walk_time = time_to_walk(coordinate, to_coordinate);
+                        let walk_time = time_to_walk(*coordinate, to_coordinate);
                         state.target_stops.push((stop_idx, walk_time));
                     }),
             }
         }
         query::TimeDirection::Departure(time) => {
             let init_label = ParetoLabel::new(time, 0.0);
-            match query.origin {
+            match &query.origin {
                 QueryLocation::Stop(stop) => {
                     state.marked_stops[stop.as_usize()] = true;
                     state.current_labels[stop.as_usize()].add(init_label, false);
                     state.tau_star[stop.as_usize()].add(init_label, false);
 
-                    let parent_idx = state.calc_parent_idx(0, stop);
+                    let parent_idx = state.calc_parent_idx(0, *stop);
                     state.parents[parent_idx] = Some(Parent::Origin);
                 }
                 QueryLocation::Stops(stops) => {
-                    for stop in stops.iter().copied() {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()].add(init_label, false);
                         state.tau_star[stop.as_usize()].add(init_label, false);
@@ -318,11 +330,11 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
-                        let time_to_walk = time_to_walk(coordinate, to_coordinate);
+                        let time_to_walk = time_to_walk(*coordinate, to_coordinate);
                         let arr_time = Time(time.0 + time_to_walk.0);
                         let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
                         let label = ParetoLabel::new(arr_time, walk_cost);
@@ -335,21 +347,25 @@ fn solve_core(
                     }),
             };
 
-            match query.destination {
+            match &query.destination {
                 QueryLocation::Stop(stop) => {
-                    state.target_stops.push((stop, Duration(0)));
+                    state.target_stops.push((*stop, Duration(0)));
                 }
                 QueryLocation::Stops(stops) => {
-                    for stop in stops.iter().copied() {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
                         state.target_stops.push((stop, Duration(0)));
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
-                        let walk_time = time_to_walk(coordinate, to_coordinate);
+                        let walk_time = time_to_walk(*coordinate, to_coordinate);
                         state.target_stops.push((stop, walk_time));
                     }),
             }

@@ -9,31 +9,31 @@ use crate::{
     spatial::SpatialHash,
 };
 
-pub enum QueryLocation<'a> {
+pub enum QueryLocation {
     Stop(StopIdx),
-    Stops(&'a [StopIdx]),
+    Stops(Vec<StopIdx>),
     Coordinate(Coordinate),
 }
 
-impl<'a> From<Coordinate> for QueryLocation<'a> {
+impl From<Coordinate> for QueryLocation {
     fn from(value: Coordinate) -> Self {
         QueryLocation::Coordinate(value)
     }
 }
 
-impl<'a> From<StopIdx> for QueryLocation<'a> {
+impl From<StopIdx> for QueryLocation {
     fn from(value: StopIdx) -> Self {
         QueryLocation::Stop(value)
     }
 }
 
-impl<'a> From<&'a [StopIdx]> for QueryLocation<'a> {
-    fn from(value: &'a [StopIdx]) -> Self {
+impl From<Vec<StopIdx>> for QueryLocation {
+    fn from(value: Vec<StopIdx>) -> Self {
         QueryLocation::Stops(value)
     }
 }
 
-impl<'a> QueryLocation<'a> {
+impl QueryLocation {
     pub fn resolve(&self, stop: StopIdx) -> Location {
         match self {
             QueryLocation::Coordinate(c) => Location::Coordinate(*c),
@@ -66,9 +66,9 @@ pub enum TimeDirection {
     Departure(Time),
 }
 
-pub struct RaptorQuery<'a> {
-    pub origin: QueryLocation<'a>,
-    pub destination: QueryLocation<'a>,
+pub struct RaptorQuery {
+    pub origin: QueryLocation,
+    pub destination: QueryLocation,
     pub time_direction: TimeDirection,
     pub date: Date,
     pub search_radius: f64,
@@ -78,8 +78,8 @@ pub struct RaptorQuery<'a> {
     pub walk_penalty: f32,
 }
 
-impl<'a> RaptorQuery<'a> {
-    pub fn new(origin: QueryLocation<'a>, destination: QueryLocation<'a>) -> Self {
+impl RaptorQuery {
+    pub fn new(origin: QueryLocation, destination: QueryLocation) -> Self {
         let now = Local::now();
         let time = Time(now.num_seconds_from_midnight());
         let seconds_since_epoch = now.timestamp();

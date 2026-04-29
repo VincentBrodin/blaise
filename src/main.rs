@@ -1,5 +1,5 @@
 use dialoguer::{FuzzySelect, theme::ColorfulTheme};
-use std::{collections::HashMap, env, fs::File, time::Instant};
+use std::{env, fs::File, time::Instant};
 
 use blaise::{
     raptor::{
@@ -10,10 +10,7 @@ use blaise::{
     },
     spatial::SpatialHash,
 };
-use gtfs_bin::{
-    consumer::Consumer,
-    models::{StopIdx, StringSlice},
-};
+use gtfs_bin::{consumer::Consumer, models::Time};
 use memmap2::MmapOptions;
 
 pub fn main() {
@@ -29,34 +26,10 @@ pub fn main() {
     let consumer = Consumer::new(&mmap).expect("Failed to parse files header");
     let spatial_hash = SpatialHash::new(&consumer);
 
-    let mut name_to_stops: HashMap<StringSlice, Vec<StopIdx>> = HashMap::new();
-
-    for (idx, stop) in consumer.stops.iter().enumerate() {
-        let stop_idx = StopIdx(idx as u32);
-
-        if consumer.iter_trips_by_stop(stop_idx).count() == 0 {
-            continue;
-        }
-
-        let name = stop.name.get().or_else(|| {
-            stop.parent_idx
-                .get()
-                .and_then(|p| consumer.stop(p).name.get())
-        });
-
-        if let Some(name) = name {
-            name_to_stops.entry(name).or_default().push(stop_idx);
-        }
-    }
-
-    let mut valid_groups: Vec<(StringSlice, Vec<StopIdx>)> = name_to_stops.into_iter().collect();
-
-    // Sort to keep consistent ordering in the fuzzy selector
-    valid_groups.sort_by(|a, b| consumer.string(a.0).cmp(consumer.string(b.0)));
-
-    let stop_names: Vec<&str> = valid_groups
+    let stop_names: Vec<&str> = consumer
+        .search_stops
         .iter()
-        .map(|(name_idx, _)| consumer.string(*name_idx))
+        .map(|search| consumer.string(search.name))
         .collect();
 
     let from = FuzzySelect::with_theme(&ColorfulTheme::default())
@@ -74,9 +47,20 @@ pub fn main() {
         .unwrap();
 
     let query = RaptorQuery::new(
-        QueryLocation::Stops(&valid_groups[from].1),
-        QueryLocation::Stops(&valid_groups[to].1),
-    );
+        QueryLocation::Stops(
+            consumer
+                .iter_stops_by_search(from.into())
+                .map(|stop| stop.idx)
+                .collect(),
+        ),
+        QueryLocation::Stops(
+            consumer
+                .iter_stops_by_search(to.into())
+                .map(|stop| stop.idx)
+                .collect(),
+        ),
+    )
+    .with_departure(Time::from_hms("08:00:00").unwrap());
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
