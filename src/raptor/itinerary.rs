@@ -122,19 +122,22 @@ impl Itinerary {
                         arrival_time,
                     } => {
                         let trip_pattern = consumer.trip_pattern_by_trip(trip);
-                        let stop_sequences: Vec<_> = consumer
-                            .iter_stop_sequence_by_trip_pattern(trip_pattern.idx)
-                            .collect();
+                        let stop_sequences =
+                            consumer.stop_sequence_by_trip_pattern(trip_pattern.idx);
 
                         let boarding_stop = stop_sequences[boarding_p.as_usize()];
                         let alighting_stop = stop_sequences[alighting_p.as_usize()];
+                        let num_stops = alighting_stop
+                            .as_usize()
+                            .saturating_sub(boarding_stop.as_usize())
+                            + 1;
                         let stop_times = consumer.stop_times_by_trip(trip);
 
-                        let mut leg_stops = Vec::new();
+                        let mut leg_stops = Vec::with_capacity(num_stops);
                         for idx in boarding_p.as_usize()..=alighting_p.as_usize() {
                             let st = stop_times[idx];
                             leg_stops.push(LegStop {
-                                location: Location::Stop(stop_sequences[idx].idx),
+                                location: Location::Stop(stop_sequences[idx]),
                                 departure_time: LiveTime::scheduled_only(
                                     st.departure_time.get().unwrap_or(Time(0)),
                                 ),
@@ -146,8 +149,8 @@ impl Itinerary {
                         }
 
                         legs.push(Leg {
-                            from: Location::Stop(boarding_stop.idx),
-                            to: Location::Stop(alighting_stop.idx),
+                            from: Location::Stop(boarding_stop),
+                            to: Location::Stop(alighting_stop),
                             departure_time,
                             arrival_time,
                             stops: leg_stops,
@@ -155,8 +158,8 @@ impl Itinerary {
                         });
 
                         match query.time_direction {
-                            query::TimeDirection::Arrival(_) => current_stop = alighting_stop.idx,
-                            query::TimeDirection::Departure(_) => current_stop = boarding_stop.idx,
+                            query::TimeDirection::Arrival(_) => current_stop = alighting_stop,
+                            query::TimeDirection::Departure(_) => current_stop = boarding_stop,
                         }
 
                         if current_round > 0 {
@@ -249,19 +252,24 @@ impl Itinerary {
             }
 
             // ==========================================
-            // 5. MERGE CONSECUTIVE WALKS
+            // 5. MERGE CONSECUTIVE WALKS (IN-PLACE)
             // ==========================================
-            let mut merged_legs: Vec<Leg> = Vec::new();
-            for leg in legs {
-                if let Some(last_leg) = merged_legs.last_mut()
-                    && matches!(last_leg.leg_type, LegType::Walk)
-                    && matches!(leg.leg_type, LegType::Walk)
-                {
-                    last_leg.to = leg.to;
-                    last_leg.arrival_time = leg.arrival_time;
-                    continue;
+            if !legs.is_empty() {
+                let mut write_idx = 0;
+
+                for read_idx in 1..legs.len() {
+                    let is_mergeable = matches!(legs[write_idx].leg_type, LegType::Walk)
+                        && matches!(legs[read_idx].leg_type, LegType::Walk);
+
+                    if is_mergeable {
+                        legs[write_idx].to = legs[read_idx].to.clone();
+                        legs[write_idx].arrival_time = legs[read_idx].arrival_time;
+                    } else {
+                        write_idx += 1;
+                        legs.swap(write_idx, read_idx);
+                    }
                 }
-                merged_legs.push(leg);
+                legs.truncate(write_idx + 1);
             }
 
             let overall_from = match query.time_direction {
@@ -277,7 +285,7 @@ impl Itinerary {
             Ok(Self {
                 from: overall_from,
                 to: overall_to,
-                legs: merged_legs,
+                legs,
             })
         } else {
             Err(crate::Error::NoRoute)
