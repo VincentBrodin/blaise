@@ -262,7 +262,7 @@ impl Itinerary {
                         && matches!(legs[read_idx].leg_type, LegType::Walk);
 
                     if is_mergeable {
-                        legs[write_idx].to = legs[read_idx].to.clone();
+                        legs[write_idx].to = legs[read_idx].to;
                         legs[write_idx].arrival_time = legs[read_idx].arrival_time;
                     } else {
                         write_idx += 1;
