@@ -1,6 +1,6 @@
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Distance, Opt, Time},
+    models::{Distance, Opt, Time, TripIdx},
 };
 
 use crate::raptor::{
@@ -21,7 +21,7 @@ pub struct Leg {
 
 #[derive(Debug, Clone, Copy)]
 pub enum LegType {
-    Transit,
+    Transit(TripIdx),
     Transfer,
     Walk,
     Origin,
@@ -151,7 +151,7 @@ impl Itinerary {
                             departure_time,
                             arrival_time,
                             stops: leg_stops,
-                            leg_type: LegType::Transit,
+                            leg_type: LegType::Transit(trip),
                         });
 
                         match query.time_direction {

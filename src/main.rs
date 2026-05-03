@@ -1,4 +1,3 @@
-use dialoguer::{FuzzySelect, theme::ColorfulTheme};
 use std::{env, fs::File, time::Instant};
 
 use blaise::{
@@ -8,7 +7,7 @@ use blaise::{
         solve,
         state::State,
     },
-    spatial::SpatialHash,
+    spatial::SpatialGrid,
 };
 use gtfs_bin::{consumer::Consumer, models::Time};
 use memmap2::MmapOptions;
@@ -24,43 +23,49 @@ pub fn main() {
     let mmap = unsafe { MmapOptions::new().map(&file).expect("Failed to map memory") };
 
     let consumer = Consumer::new(&mmap).expect("Failed to parse files header");
-    let spatial_hash = SpatialHash::new(&consumer);
+    let spatial_hash = SpatialGrid::new(&consumer);
 
-    let stop_names: Vec<&str> = consumer
-        .search_stops
-        .iter()
-        .map(|search| consumer.string(search.name))
-        .collect();
+    // let stop_names: Vec<&str> = consumer
+    //     .search_stops
+    //     .iter()
+    //     .map(|search| consumer.string(search.name))
+    //     .collect();
 
-    let from = FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("From")
-        .default(0)
-        .items(stop_names.iter())
-        .interact()
-        .unwrap();
-
-    let to = FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("To")
-        .default(0)
-        .items(stop_names.iter())
-        .interact()
-        .unwrap();
+    // let from = FuzzySelect::with_theme(&ColorfulTheme::default())
+    //     .with_prompt("From")
+    //     .default(0)
+    //     .items(stop_names.iter())
+    //     .interact()
+    //     .unwrap();
+    //
+    // let to = FuzzySelect::with_theme(&ColorfulTheme::default())
+    //     .with_prompt("To")
+    //     .default(0)
+    //     .items(stop_names.iter())
+    //     .interact()
+    //     .unwrap();
+    //
+    // let query = RaptorQuery::new(
+    //     QueryLocation::Stops(
+    //         consumer
+    //             .iter_stops_by_search(from.into())
+    //             .map(|stop| stop.idx)
+    //             .collect(),
+    //     ),
+    //     QueryLocation::Stops(
+    //         consumer
+    //             .iter_stops_by_search(to.into())
+    //             .map(|stop| stop.idx)
+    //             .collect(),
+    //     ),
+    // )
+    // .with_departure(Time::from_hms("08:00:00").unwrap());
 
     let query = RaptorQuery::new(
-        QueryLocation::Stops(
-            consumer
-                .iter_stops_by_search(from.into())
-                .map(|stop| stop.idx)
-                .collect(),
-        ),
-        QueryLocation::Stops(
-            consumer
-                .iter_stops_by_search(to.into())
-                .map(|stop| stop.idx)
-                .collect(),
-        ),
+        QueryLocation::Coordinate((59.58367894617446, 17.8937414645414).into()),
+        QueryLocation::Coordinate((59.34173675357976, 18.03784020058387).into()),
     )
-    .with_departure(Time::from_hms("08:00:00").unwrap());
+    .with_arrival(Time::from_hms("09:30:00").unwrap());
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
@@ -117,7 +122,7 @@ pub fn print_itinerary(itinerary: &Itinerary, consumer: &Consumer) {
         let to_name = format_location(&leg.to, consumer);
 
         match leg.leg_type {
-            LegType::Transit => {
+            LegType::Transit(_) => {
                 println!("🚌 \x1b[1;34mTRANSIT\x1b[0m");
 
                 if leg.stops.is_empty() {

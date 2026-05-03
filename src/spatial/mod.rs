@@ -1,154 +1,167 @@
-use std::{collections::HashMap, f64::consts::PI, ops::Range};
+use std::collections::HashMap;
 
 use gtfs_bin::{
     consumer::Consumer,
-    models::{Coordinate, StopIdx},
+    models::{Coordinate, Opt, Sentinel, Slice, StopIdx},
 };
-use rayon::{
-    iter::{IntoParallelRefIterator, ParallelIterator},
-    slice::ParallelSliceMut,
-};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-const EARTH_RADIUS_M: f64 = 6_378_137.0;
-const CELL_SIZE: f64 = 500.0;
+pub const DEG_OF_LAT: f64 = 111_320.0;
+pub const CELL_SIZE_M: f64 = 1000.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct CellSlice {
     pub start: u32,
     pub count: u32,
 }
 
-impl CellSlice {
-    #[inline]
-    fn to_range(&self) -> Range<usize> {
+impl Slice for CellSlice {
+    fn range(self) -> std::ops::Range<usize> {
         let start = self.start as usize;
         let end = start + self.count as usize;
         start..end
     }
+
+    fn new(start: u32, count: u32) -> Self {
+        Self { start, count }
+    }
 }
 
-pub struct SpatialHash {
-    map: HashMap<u64, CellSlice>,
-    buffer: Vec<StopIdx>,
+impl Sentinel for CellSlice {
+    const NONE: Self = Self {
+        start: u32::MAX,
+        count: u32::MAX,
+    };
 }
 
-impl SpatialHash {
+pub struct SpatialGrid {
+    cells: Vec<Opt<CellSlice>>,
+    buffer: Vec<(StopIdx, f64, f64)>,
+    min_lon: f64,
+    min_lat: f64,
+    width: i32,
+    height: i32,
+    center_lat_cos: f64,
+}
+
+impl SpatialGrid {
     pub fn new(consumer: &Consumer) -> Self {
-        let mut entries: Vec<_> = consumer
+        let (min_lat, max_lat, min_lon, max_lon) = consumer
             .stops
             .par_iter()
-            .filter_map(|stop| {
-                stop.coordinate.get().map(|coord| {
-                    let key = Self::lat_lon_to_key(coord);
-                    (key, stop.idx)
-                })
+            .filter_map(|stop| stop.coordinate.get())
+            .map(|coord| {
+                let lat = coord.lat_f64();
+                let lon = coord.lon_f64();
+
+                (lat, lat, lon, lon)
             })
-            .collect();
+            .reduce(
+                || (f64::MAX, f64::MIN, f64::MAX, f64::MIN),
+                |a, b| {
+                    (
+                        a.0.min(b.0), // min_lat
+                        a.1.max(b.1), // max_lat
+                        a.2.min(b.2), // min_lon
+                        a.3.max(b.3), // max_lon
+                    )
+                },
+            );
 
-        entries.par_sort_by_key(|(key, _)| *key);
+        let center_lat = (min_lat + max_lat) / 2.0;
+        let center_lat_cos = f64::to_radians(center_lat).cos();
 
-        let mut map: HashMap<u64, CellSlice> = HashMap::new();
-        let mut buffer: Vec<StopIdx> = Vec::with_capacity(entries.len());
-        let mut last_key: Option<u64> = None;
-        let mut last_start: usize = 0;
-        for (key, stop_idx) in entries.into_iter() {
-            if let Some(lk) = last_key
-                && lk != key
-            {
-                let slice = CellSlice {
-                    start: last_start as u32,
-                    count: (buffer.len() - last_start) as u32,
-                };
-                last_start = buffer.len();
-                map.insert(lk, slice);
-                last_key = Some(key)
-            } else {
-                last_key = Some(key)
-            }
+        let max_x_meters = (max_lon - min_lon) * DEG_OF_LAT * center_lat_cos;
+        let max_y_meters = (max_lat - min_lat) * DEG_OF_LAT;
 
-            buffer.push(stop_idx);
+        let width = (max_x_meters / CELL_SIZE_M).ceil() as i32 + 1;
+        let height = (max_y_meters / CELL_SIZE_M).ceil() as i32 + 1;
+        let total_cells = (width * height) as usize;
+
+        let mut cell_map: HashMap<usize, Vec<(StopIdx, f64, f64)>> = HashMap::new();
+
+        let valid_stops = consumer
+            .stops
+            .iter()
+            .filter_map(|s| s.coordinate.get().map(|c| (s.idx, c)));
+
+        for (stop, coord) in valid_stops {
+            let x = (coord.lon_f64() - min_lon) * DEG_OF_LAT * center_lat_cos;
+            let y = (coord.lat_f64() - min_lat) * DEG_OF_LAT;
+
+            let center_gx = (x / CELL_SIZE_M) as i32;
+            let center_gy = (y / CELL_SIZE_M) as i32;
+            let cell = (center_gy * width + center_gx) as usize;
+            cell_map
+                .entry(cell)
+                .or_default()
+                .push((stop, coord.lat_f64(), coord.lon_f64()));
         }
 
-        if let Some(lk) = last_key
-            && last_start != buffer.len()
-        {
+        let mut active_cells: Vec<_> = cell_map.into_iter().collect();
+        active_cells.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        let mut cells = vec![Opt::new(CellSlice::NONE); total_cells];
+        let mut buffer: Vec<(StopIdx, f64, f64)> = Vec::with_capacity(total_cells);
+
+        for (idx, stops) in active_cells {
             let slice = CellSlice {
-                start: last_start as u32,
-                count: (buffer.len() - last_start) as u32,
+                start: buffer.len() as u32,
+                count: stops.len() as u32,
             };
-            map.insert(lk, slice);
+            cells[idx] = Opt::new(slice);
+            buffer.extend_from_slice(&stops);
         }
 
-        Self { map, buffer }
+        Self {
+            cells,
+            buffer,
+            min_lon,
+            min_lat,
+            width,
+            height,
+            center_lat_cos,
+        }
     }
 
-    pub fn get_in_radius_iter<'a>(
-        &'a self,
-        consumer: &'a Consumer,
+    pub fn iter_stops_in_radius(
+        &self,
         coord: Coordinate,
-        radius_m: f64,
-    ) -> impl Iterator<Item = StopIdx> + 'a {
-        const CELL_SIZE: f64 = 500.0;
+        radius: f64,
+    ) -> impl Iterator<Item = StopIdx> {
+        let x = (coord.lon_f64() - self.min_lon) * DEG_OF_LAT * self.center_lat_cos;
+        let y = (coord.lat_f64() - self.min_lat) * DEG_OF_LAT;
+        let radius_sq = radius * radius;
 
-        let (center_x, center_y) = Self::lat_lon_to_grid(coord);
-        let cell_radius = (radius_m / CELL_SIZE).ceil() as i32;
+        let min_gx = ((x - radius) / CELL_SIZE_M).floor() as i32 - 1;
+        let min_gx = min_gx.clamp(0, self.width - 1);
+        let max_gx = ((x + radius) / CELL_SIZE_M).floor() as i32 + 1;
+        let max_gx = max_gx.clamp(0, self.width - 1);
+        let min_gy = ((y - radius) / CELL_SIZE_M).floor() as i32 - 1;
+        let min_gy = min_gy.clamp(0, self.height - 1);
+        let max_gy = ((y + radius) / CELL_SIZE_M).floor() as i32 + 1;
+        let max_gy = max_gy.clamp(0, self.height - 1);
 
-        (-cell_radius..=cell_radius)
-            .flat_map(move |dy| {
-                (-cell_radius..=cell_radius).map(move |dx| {
-                    let grid_x = center_x + dx;
-                    let grid_y = center_y + dy;
-                    Self::pack_key(grid_x, grid_y)
+        let min_lon = self.min_lon;
+        let min_lat = self.min_lat;
+        let center_lat_cos = self.center_lat_cos;
+
+        (min_gy..=max_gy)
+            .flat_map(move |gy| {
+                (min_gx..=max_gx).filter_map(move |gx| {
+                    let cell_idx = (gy * self.width + gx) as usize;
+                    self.cells[cell_idx]
+                        .get()
+                        .map(|slice| &self.buffer[slice.range()])
                 })
             })
-            .filter_map(move |key| self.map.get(&key))
-            .flat_map(move |slice| self.buffer[slice.to_range()].iter().copied())
-            .filter(move |&stop_idx| {
-                if let Some(other_coord) = consumer.stop(stop_idx).coordinate.get() {
-                    Self::distance(coord, other_coord) <= radius_m
-                } else {
-                    false
-                }
+            .flatten()
+            .filter(move |(_, lat, lon)| {
+                let dx = x - ((lon - min_lon) * DEG_OF_LAT * center_lat_cos);
+                let dy = y - ((lat - min_lat) * DEG_OF_LAT);
+
+                dx * dx + dy * dy <= radius_sq
             })
-    }
-
-    pub fn distance(a: Coordinate, b: Coordinate) -> f64 {
-        const R: f64 = 6371.0;
-        let dist_lat = f64::to_radians(a.lat_f64() - b.lat_f64());
-        let dist_lon = f64::to_radians(a.lon_f64() - b.lon_f64());
-        let a_val = f64::powi(f64::sin(dist_lat / 2.0), 2)
-            + f64::cos(f64::to_radians(b.lat_f64()))
-                * f64::cos(f64::to_radians(a.lat_f64()))
-                * f64::sin(dist_lon / 2.0)
-                * f64::sin(dist_lon / 2.0);
-        let c = 2.0 * f64::atan2(f64::sqrt(a_val), f64::sqrt(1.0 - a_val));
-        let euclidean_distance = R * c * 1000.0;
-
-        // Apply circuity factor of 1.3 to get the network distance
-        euclidean_distance * 1.3
-    }
-
-    #[inline]
-    fn lat_lon_to_grid(coord: Coordinate) -> (i32, i32) {
-        let lat_rad = coord.lat_f64().to_radians();
-        let lon_rad = coord.lon_f64().to_radians();
-
-        let x_meters = EARTH_RADIUS_M * lon_rad;
-        let y_meters = EARTH_RADIUS_M * ((PI / 4.0) + (lat_rad / 2.0)).tan().ln();
-
-        let grid_x = (x_meters / CELL_SIZE).floor() as i32;
-        let grid_y = (y_meters / CELL_SIZE).floor() as i32;
-
-        (grid_x, grid_y)
-    }
-
-    #[inline]
-    fn pack_key(x: i32, y: i32) -> u64 {
-        ((x as u32 as u64) << 32) | (y as u32 as u64)
-    }
-
-    #[inline]
-    fn lat_lon_to_key(coord: Coordinate) -> u64 {
-        let (x, y) = Self::lat_lon_to_grid(coord);
-        Self::pack_key(x, y)
+            .map(|(stop, _, _)| *stop)
     }
 }

@@ -27,6 +27,7 @@
             pkgs.protobuf
             pkgs.gnuplot
             pkgs.cargo-show-asm
+	    pkgs.samply
           ];
 
           buildInputs = [

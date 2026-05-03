@@ -25,6 +25,7 @@ harness = false
 
 
 [dependencies]
+ahash = "0.8.12"
 chrono = "0.4.44"
 criterion = "0.8.2"
 dialoguer = {version = "0.12.0", features = ["fuzzy-select"] }
@@ -32,6 +33,7 @@ dialoguer = {version = "0.12.0", features = ["fuzzy-select"] }
 gtfs-bin = { path = "../gtfs-bin" }
 memmap2 = "0.9.10"
 rayon = "1.11.0"
+rustc-hash = "2.1.2"
 smallvec = "1.15.1"
 thiserror = "2.0.17"
 tracing = "0.1.44"
@@ -42,3 +44,8 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true 
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

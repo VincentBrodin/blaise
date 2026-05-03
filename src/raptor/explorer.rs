@@ -8,7 +8,7 @@ use crate::{
     raptor::{
         LiveTime, Parent, SequnceIdx, Update, query::RaptorQuery, state::State, time_to_walk,
     },
-    spatial::SpatialHash,
+    spatial::SpatialGrid,
 };
 
 #[inline(always)]
@@ -329,7 +329,7 @@ pub fn explore_trip_patterns_reverse(
 pub fn explore_transfers(
     query: &RaptorQuery,
     consumer: &Consumer,
-    spatial: &SpatialHash,
+    spatial: &SpatialGrid,
     state: &mut State,
 ) -> Vec<Update> {
     state
@@ -389,7 +389,7 @@ pub fn explore_transfers(
                     // Spatial walking
                     if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
                         spatial
-                            .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                            .iter_stops_in_radius(coordinate, query.search_radius)
                             .filter(|&s| consumer.iter_trips_by_stop(s).count() != 0)
                             .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                             .for_each(|(to_stop, to_coordinate)| {
@@ -432,7 +432,7 @@ pub fn explore_transfers(
 pub fn explore_transfers_reverse(
     query: &RaptorQuery,
     consumer: &Consumer,
-    spatial: &SpatialHash,
+    spatial: &SpatialGrid,
     state: &mut State,
 ) -> Vec<Update> {
     state
@@ -504,7 +504,7 @@ pub fn explore_transfers_reverse(
                     // Spatial walking
                     if let Some(coordinate) = consumer.stop(stop_idx).coordinate.get() {
                         spatial
-                            .get_in_radius_iter(consumer, coordinate, query.search_radius)
+                            .iter_stops_in_radius(coordinate, query.search_radius)
                             .filter(|&s| consumer.iter_trips_by_stop(s).count() != 0)
                             .filter_map(|s| consumer.stop(s).coordinate.get().map(|c| (s, c)))
                             .for_each(|(other_stop, other_coordinate)| {

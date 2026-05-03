@@ -6,7 +6,7 @@ use gtfs_bin::{
 
 use crate::{
     raptor::{itinerary::Itinerary, solve, state::State},
-    spatial::SpatialHash,
+    spatial::SpatialGrid,
 };
 
 pub enum QueryLocation {
@@ -90,7 +90,7 @@ impl RaptorQuery {
             origin,
             destination,
             time_direction: TimeDirection::Departure(time),
-            search_radius: 1500.0,
+            search_radius: 1000.0,
             date,
 
             transit_penalty: 1.0,
@@ -116,7 +116,7 @@ impl RaptorQuery {
     pub fn solve(
         self,
         consumer: &Consumer,
-        spatial: &SpatialHash,
+        spatial: &SpatialGrid,
         state: &mut State,
     ) -> Result<Itinerary, crate::Error> {
         solve(self, consumer, spatial, state)

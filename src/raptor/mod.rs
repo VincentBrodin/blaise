@@ -15,7 +15,7 @@ use crate::{
         query::{QueryLocation, RaptorQuery},
         state::State,
     },
-    spatial::SpatialHash,
+    spatial::SpatialGrid,
 };
 
 mod explorer;
@@ -200,7 +200,7 @@ impl Update {
 pub fn solve(
     query: RaptorQuery,
     consumer: &Consumer,
-    spatial: &SpatialHash,
+    spatial: &SpatialGrid,
     state: &mut State,
 ) -> Result<Itinerary, crate::Error> {
     let is_arrival = matches!(query.time_direction, query::TimeDirection::Arrival(_));
@@ -231,7 +231,7 @@ pub fn solve(
 fn solve_core(
     query: &RaptorQuery,
     consumer: &Consumer,
-    spatial: &SpatialHash,
+    spatial: &SpatialGrid,
     state: &mut State,
 ) -> Result<Itinerary, crate::Error> {
     match query.time_direction {
@@ -259,7 +259,7 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
@@ -289,7 +289,7 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
                     .filter_map(|stop_idx| {
                         consumer
@@ -330,7 +330,7 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
@@ -361,7 +361,7 @@ fn solve_core(
                     }
                 }
                 QueryLocation::Coordinate(coordinate) => spatial
-                    .get_in_radius_iter(consumer, *coordinate, query.search_radius)
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
                     .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
                     .for_each(|(stop, to_coordinate)| {
