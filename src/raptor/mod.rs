@@ -35,7 +35,9 @@ impl Sentinel for SequnceIdx {
 }
 
 impl SequnceIdx {
-    pub fn as_usize(&self) -> usize {
+    #[inline]
+    #[must_use]
+    pub const fn as_usize(&self) -> usize {
         self.0 as usize
     }
 }
@@ -57,7 +59,8 @@ impl ParetoLabel {
         cost: f32::MAX,
     };
 
-    pub fn new(time: Time, cost: f32) -> Self {
+    #[must_use]
+    pub const fn new(time: Time, cost: f32) -> Self {
         Self { time, cost }
     }
 }
@@ -67,12 +70,14 @@ pub struct ParetoFront(smallvec::SmallVec<[ParetoLabel; FRONT_SIZE]>);
 
 impl ParetoFront {
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self(smallvec::SmallVec::new())
     }
 
     /// Returns `true` if `(time, cost)` is dominated by any label already on the front.
     #[inline]
+    #[must_use]
     pub fn is_dominated(&self, time: Time, cost: f32, is_arrival: bool) -> bool {
         self.0.iter().any(|l| {
             let time_ok = if is_arrival {
@@ -106,12 +111,14 @@ impl ParetoFront {
 
     /// Minimum cost across all labels. `f32::MAX` if empty.
     #[inline]
+    #[must_use]
     pub fn best_cost(&self) -> f32 {
         self.0.iter().fold(f32::MAX, |acc, l| acc.min(l.cost))
     }
 
     /// Best time: earliest for forward, latest for reverse. `None` if empty.
     #[inline]
+    #[must_use]
     pub fn best_time(&self, is_arrival: bool) -> Option<Time> {
         if is_arrival {
             self.0.iter().map(|l| l.time).max()
@@ -121,6 +128,7 @@ impl ParetoFront {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -143,11 +151,13 @@ pub struct LiveTime {
 }
 
 impl LiveTime {
+    #[must_use]
     pub fn delay(&self) -> Delay {
-        Delay((self.actual.0 as i64 - self.scheduled.0 as i64) as i16)
+        (self.actual - self.scheduled).into()
     }
 
-    pub fn scheduled_only(time: Time) -> Self {
+    #[must_use]
+    pub const fn scheduled_only(time: Time) -> Self {
         Self {
             scheduled: time,
             actual: time,
@@ -187,7 +197,8 @@ pub struct Update {
 }
 
 impl Update {
-    pub fn new(stop: StopIdx, time: Time, cost: f32, parent: Parent) -> Self {
+    #[must_use]
+    pub const fn new(stop: StopIdx, time: Time, cost: f32, parent: Parent) -> Self {
         Self {
             stop,
             time,
@@ -228,6 +239,7 @@ pub fn solve(
     Ok(itinerary)
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn solve_core(
     query: &RaptorQuery,
     consumer: &Consumer,
@@ -261,19 +273,25 @@ fn solve_core(
                 QueryLocation::Coordinate(coordinate) => spatial
                     .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
-                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
                     .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(*coordinate, to_coordinate);
                         let arr_time = Time(time.0 - time_to_walk.0);
-                        let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
-                        let label = ParetoLabel::new(arr_time, walk_cost);
+                        let walk_cost = f64::from(time_to_walk.0) * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost as f32);
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()].add(label, true);
                         state.tau_star[stop.as_usize()].add(label, true);
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
-            };
+            }
 
             match &query.origin {
                 QueryLocation::Stop(stop) => {
@@ -295,7 +313,7 @@ fn solve_core(
                         consumer
                             .stop(stop_idx)
                             .coordinate
-                            .get()
+                            .as_option()
                             .map(|c| (stop_idx, c))
                     })
                     .for_each(|(stop_idx, to_coordinate)| {
@@ -332,12 +350,18 @@ fn solve_core(
                 QueryLocation::Coordinate(coordinate) => spatial
                     .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
-                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
                     .for_each(|(stop, to_coordinate)| {
                         let time_to_walk = time_to_walk(*coordinate, to_coordinate);
                         let arr_time = Time(time.0 + time_to_walk.0);
-                        let walk_cost = time_to_walk.0 as f32 * query.walk_penalty;
-                        let label = ParetoLabel::new(arr_time, walk_cost);
+                        let walk_cost = f64::from(time_to_walk.0) * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost as f32);
                         state.marked_stops[stop.as_usize()] = true;
                         state.current_labels[stop.as_usize()].add(label, false);
                         state.tau_star[stop.as_usize()].add(label, false);
@@ -345,7 +369,7 @@ fn solve_core(
                         let parent_idx = state.calc_parent_idx(0, stop);
                         state.parents[parent_idx] = Some(Parent::Origin);
                     }),
-            };
+            }
 
             match &query.destination {
                 QueryLocation::Stop(stop) => {
@@ -363,7 +387,13 @@ fn solve_core(
                 QueryLocation::Coordinate(coordinate) => spatial
                     .iter_stops_in_radius(*coordinate, query.search_radius)
                     .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
-                    .filter_map(|stop| consumer.stop(stop).coordinate.get().map(|c| (stop, c)))
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
                     .for_each(|(stop, to_coordinate)| {
                         let walk_time = time_to_walk(*coordinate, to_coordinate);
                         state.target_stops.push((stop, walk_time));
@@ -391,10 +421,11 @@ fn solve_core(
             } else {
                 Time(label.time.0 + duration.0)
             };
-            let true_cost = label.cost + duration.0 as f32 * query.walk_penalty;
-            let new_label = ParetoLabel::new(true_time, true_cost);
+            let true_cost =
+                f64::from(duration.0).mul_add(query.walk_penalty, f64::from(label.cost));
+            let new_label = ParetoLabel::new(true_time, true_cost as f32);
             if state.target_tau_star.add(new_label, is_arrival)
-                && true_cost <= state.target_tau_star.best_cost()
+                && true_cost as f32 <= state.target_tau_star.best_cost()
             {
                 state.target_best_stop = Opt::new(*target_stop);
                 state.target_best_round = Some(0);
@@ -408,7 +439,7 @@ fn solve_core(
         }
 
         mem::swap(&mut state.current_labels, &mut state.previous_labels);
-        state.current_labels.iter_mut().for_each(|f| f.clear());
+        state.current_labels.iter_mut().for_each(ParetoFront::clear);
 
         state
             .active_trip_patterns
@@ -429,7 +460,7 @@ fn solve_core(
                     let active_p_idx = state.active_trip_patterns[trip_pattern.idx.as_usize()];
                     match query.time_direction {
                         query::TimeDirection::Arrival(_) => {
-                            if let Some(active_p_idx) = active_p_idx.get()
+                            if let Some(active_p_idx) = active_p_idx.as_option()
                                 && p_idx > active_p_idx
                             {
                                 state.active_trip_patterns[trip_pattern.idx.as_usize()] =
@@ -440,7 +471,7 @@ fn solve_core(
                             }
                         }
                         query::TimeDirection::Departure(_) => {
-                            if let Some(active_p_idx) = active_p_idx.get()
+                            if let Some(active_p_idx) = active_p_idx.as_option()
                                 && p_idx < active_p_idx
                             {
                                 state.active_trip_patterns[trip_pattern.idx.as_usize()] =
@@ -480,10 +511,10 @@ fn solve_core(
                 } else {
                     Time(label.time.0 + duration.0)
                 };
-                let true_cost = label.cost + duration.0 as f32 * query.walk_penalty;
-                let new_label = ParetoLabel::new(true_time, true_cost);
+                let true_cost = label.cost as f64 + duration.0 as f64 * query.walk_penalty;
+                let new_label = ParetoLabel::new(true_time, true_cost as f32);
                 if state.target_tau_star.add(new_label, is_arrival)
-                    && true_cost <= state.target_tau_star.best_cost()
+                    && true_cost as f32 <= state.target_tau_star.best_cost()
                 {
                     state.target_best_stop = Opt::new(*target_stop);
                     state.target_best_round = Some(round);
@@ -495,20 +526,25 @@ fn solve_core(
     Itinerary::new(query, state, consumer)
 }
 
+#[must_use]
 pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
     const R: f64 = 6371.0;
     let dist_lat = f64::to_radians(coordinate_a.lat_f64() - coordinate_b.lat_f64());
     let dist_lon = f64::to_radians(coordinate_a.lon_f64() - coordinate_b.lon_f64());
-    let a = f64::powi(f64::sin(dist_lat / 2.0), 2)
-        + f64::cos(f64::to_radians(coordinate_b.lat_f64()))
-            * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
-            * f64::sin(dist_lon / 2.0)
-            * f64::sin(dist_lon / 2.0);
+    let a = (f64::cos(f64::to_radians(coordinate_b.lat_f64()))
+        * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
+        * f64::sin(dist_lon / 2.0))
+    .mul_add(
+        f64::sin(dist_lon / 2.0),
+        f64::powi(f64::sin(dist_lat / 2.0), 2),
+    );
     let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
     let euclidean_distance = R * c * 1000.0;
 
     let network_distance = euclidean_distance * 1.3;
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     let duration = (network_distance / 1.2).ceil() as u32;
     Duration(duration)
 }

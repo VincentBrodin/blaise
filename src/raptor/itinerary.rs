@@ -48,7 +48,7 @@ impl Itinerary {
         state: &State,
         consumer: &Consumer,
     ) -> Result<Self, crate::Error> {
-        if let Some(best_stop) = state.target_best_stop.get()
+        if let Some(best_stop) = state.target_best_stop.as_option()
             && let Some(best_round) = state.target_best_round
         {
             let mut legs: Vec<Leg> = Vec::with_capacity((best_round * 2) + 2);
@@ -139,10 +139,10 @@ impl Itinerary {
                             leg_stops.push(LegStop {
                                 location: Location::Stop(stop_sequences[idx]),
                                 departure_time: LiveTime::scheduled_only(
-                                    st.departure_time.get().unwrap_or(Time(0)),
+                                    st.departure_time.as_option().unwrap_or(Time(0)),
                                 ),
                                 arrival_time: LiveTime::scheduled_only(
-                                    st.arrival_time.get().unwrap_or(Time(0)),
+                                    st.arrival_time.as_option().unwrap_or(Time(0)),
                                 ),
                                 distance_traveled: st.distance_traveled,
                             });

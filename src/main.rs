@@ -9,7 +9,7 @@ use blaise::{
     },
     spatial::SpatialGrid,
 };
-use gtfs_bin::{consumer::Consumer, models::Time};
+use gtfs_bin::consumer::Consumer;
 use memmap2::MmapOptions;
 
 pub fn main() {
@@ -61,11 +61,14 @@ pub fn main() {
     // )
     // .with_departure(Time::from_hms("08:00:00").unwrap());
 
+    // let query = RaptorQuery::new(
+    //     QueryLocation::Coordinate((59.58367894617446, 17.8937414645414).into()),
+    //     QueryLocation::Coordinate((59.34173675357976, 18.03784020058387).into()),
+    // )
     let query = RaptorQuery::new(
-        QueryLocation::Coordinate((59.58367894617446, 17.8937414645414).into()),
-        QueryLocation::Coordinate((59.34173675357976, 18.03784020058387).into()),
-    )
-    .with_arrival(Time::from_hms("09:30:00").unwrap());
+        QueryLocation::Coordinate((59.5836, 17.8938).into()),
+        QueryLocation::Coordinate((59.3397, 18.0371).into()),
+    );
 
     let mut state = State::new(&consumer);
     let now = Instant::now();
@@ -80,11 +83,10 @@ fn format_location(loc: &Location, consumer: &Consumer) -> String {
     match loc {
         Location::Stop(stop_idx) => {
             let stop = consumer.stop(*stop_idx);
-            if let Some(name) = stop.name.get() {
-                consumer.string(name).to_string()
-            } else {
-                consumer.stop_id(stop.id).to_string()
-            }
+            stop.name.as_option().map_or_else(
+                || consumer.stop_id(stop.id).to_string(),
+                |name| consumer.string(name).to_string(),
+            )
         }
         Location::Coordinate(coord) => {
             format!("Location ({}, {})", coord.lat_f64(), coord.lon_f64())

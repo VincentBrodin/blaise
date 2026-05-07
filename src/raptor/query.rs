@@ -73,9 +73,9 @@ pub struct RaptorQuery {
     pub date: Date,
     pub search_radius: f64,
 
-    pub transit_penalty: f32,
-    pub transfer_penalty: f32,
-    pub walk_penalty: f32,
+    pub transit_penalty: f64,
+    pub transfer_penalty: f64,
+    pub walk_penalty: f64,
 }
 
 impl RaptorQuery {

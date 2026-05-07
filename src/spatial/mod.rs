@@ -25,6 +25,16 @@ impl Slice for CellSlice {
     fn new(start: u32, count: u32) -> Self {
         Self { start, count }
     }
+
+    fn from_usize(start: usize, count: usize) -> Self {
+        if let Ok(start) = u32::try_from(start)
+            && let Ok(count) = u32::try_from(count)
+        {
+            Self::new(start, count)
+        } else {
+            Self::NONE
+        }
+    }
 }
 
 impl Sentinel for CellSlice {
@@ -49,7 +59,7 @@ impl SpatialGrid {
         let (min_lat, max_lat, min_lon, max_lon) = consumer
             .stops
             .par_iter()
-            .filter_map(|stop| stop.coordinate.get())
+            .filter_map(|stop| stop.coordinate.as_option())
             .map(|coord| {
                 let lat = coord.lat_f64();
                 let lon = coord.lon_f64();
@@ -71,11 +81,11 @@ impl SpatialGrid {
         let center_lat = (min_lat + max_lat) / 2.0;
         let center_lat_cos = f64::to_radians(center_lat).cos();
 
-        let max_x_meters = (max_lon - min_lon) * DEG_OF_LAT * center_lat_cos;
-        let max_y_meters = (max_lat - min_lat) * DEG_OF_LAT;
+        let max_x = (max_lon - min_lon) * DEG_OF_LAT * center_lat_cos;
+        let max_y = (max_lat - min_lat) * DEG_OF_LAT;
 
-        let width = (max_x_meters / CELL_SIZE_M).ceil() as i32 + 1;
-        let height = (max_y_meters / CELL_SIZE_M).ceil() as i32 + 1;
+        let width = (max_x / CELL_SIZE_M).ceil() as i32 + 1;
+        let height = (max_y / CELL_SIZE_M).ceil() as i32 + 1;
         let total_cells = (width * height) as usize;
 
         let mut cell_map: HashMap<usize, Vec<(StopIdx, f64, f64)>> = HashMap::new();
@@ -83,15 +93,15 @@ impl SpatialGrid {
         let valid_stops = consumer
             .stops
             .iter()
-            .filter_map(|s| s.coordinate.get().map(|c| (s.idx, c)));
+            .filter_map(|s| s.coordinate.as_option().map(|c| (s.idx, c)));
 
         for (stop, coord) in valid_stops {
             let x = (coord.lon_f64() - min_lon) * DEG_OF_LAT * center_lat_cos;
             let y = (coord.lat_f64() - min_lat) * DEG_OF_LAT;
 
-            let center_gx = (x / CELL_SIZE_M) as i32;
-            let center_gy = (y / CELL_SIZE_M) as i32;
-            let cell = (center_gy * width + center_gx) as usize;
+            let gx = (x / CELL_SIZE_M) as i32;
+            let gy = (y / CELL_SIZE_M) as i32;
+            let cell = (gy * width + gx) as usize;
             cell_map
                 .entry(cell)
                 .or_default()
@@ -151,7 +161,7 @@ impl SpatialGrid {
                 (min_gx..=max_gx).filter_map(move |gx| {
                     let cell_idx = (gy * self.width + gx) as usize;
                     self.cells[cell_idx]
-                        .get()
+                        .as_option()
                         .map(|slice| &self.buffer[slice.range()])
                 })
             })
