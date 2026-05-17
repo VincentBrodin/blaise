@@ -1,4 +1,8 @@
 **/target
 *.zip
+*.gtfs
 crates/server/sweden
 .direnv/
+.DS_Store
+.env
+profile.json.gz

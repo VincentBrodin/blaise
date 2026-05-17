@@ -1,313 +1,550 @@
-mod allocator;
-mod discovery;
-mod explorer;
-mod itinerary;
-mod location;
-mod path;
-mod state;
-
 use std::mem;
 
-pub use allocator::*;
-pub(crate) use discovery::*;
-pub use itinerary::*;
-pub use location::*;
-pub(crate) use path::*;
-pub(crate) use state::*;
+use gtfs_bin::{
+    consumer::Consumer,
+    models::{Coordinate, Delay, Duration, Opt, Sentinel, StopIdx, Time, TripIdx},
+};
 
 use crate::{
-    raptor::explorer::{
-        explore_routes, explore_routes_reverse, explore_transfers, explore_transfers_reverse,
+    raptor::{
+        explorer::{
+            explore_transfers, explore_transfers_reverse, explore_trip_patterns,
+            explore_trip_patterns_reverse,
+        },
+        itinerary::Itinerary,
+        query::{QueryLocation, RaptorQuery},
+        state::State,
     },
-    repository::Repository,
-    shared::time::{self, Time},
+    spatial::SpatialGrid,
 };
-use thiserror::Error;
-use tracing::{trace, warn};
 
-pub const MAX_ROUNDS: usize = 15;
+mod explorer;
+pub mod itinerary;
+pub mod query;
+pub mod state;
 
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("Area id does not match any entry")]
-    InvalidAreaID,
-    #[error("Stop id does not match any entry")]
-    InvalidStopID,
-    #[error("A route was found but failed to build it")]
-    FailedToBuildRoute,
-    #[error("Could not find a route")]
-    NoRouteFound,
+const MAX_ROUNDS: usize = 15;
+const FRONT_SIZE: usize = 4;
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SequnceIdx(u32);
+
+impl Sentinel for SequnceIdx {
+    const NONE: Self = Self(u32::MAX);
+}
+
+impl SequnceIdx {
+    #[inline]
+    #[must_use]
+    pub const fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct ParetoLabel {
+    pub time: Time,
+    pub cost: f32,
+}
+
+impl ParetoLabel {
+    pub const MAX: Self = Self {
+        time: Time(u32::MAX),
+        cost: f32::MAX,
+    };
+
+    pub const MIN: Self = Self {
+        time: Time(u32::MIN),
+        cost: f32::MAX,
+    };
+
+    #[must_use]
+    pub const fn new(time: Time, cost: f32) -> Self {
+        Self { time, cost }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ParetoFront(smallvec::SmallVec<[ParetoLabel; FRONT_SIZE]>);
+
+impl ParetoFront {
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self(smallvec::SmallVec::new())
+    }
+
+    /// Returns `true` if `(time, cost)` is dominated by any label already on the front.
+    #[inline]
+    #[must_use]
+    pub fn is_dominated(&self, time: Time, cost: f32, is_arrival: bool) -> bool {
+        self.0.iter().any(|l| {
+            let time_ok = if is_arrival {
+                l.time >= time
+            } else {
+                l.time <= time
+            };
+            time_ok && l.cost <= cost
+        })
+    }
+
+    /// Add a label if it is not dominated. Remove any labels the new one dominates.
+    /// Returns `true` if the label was accepted.
+    #[inline]
+    pub fn add(&mut self, label: ParetoLabel, is_arrival: bool) -> bool {
+        if self.is_dominated(label.time, label.cost, is_arrival) {
+            return false;
+        }
+        // Remove labels that the new label dominates.
+        self.0.retain(|l| {
+            let time_ok = if is_arrival {
+                label.time >= l.time
+            } else {
+                label.time <= l.time
+            };
+            !(time_ok && label.cost <= l.cost)
+        });
+        self.0.push(label);
+        true
+    }
+
+    /// Minimum cost across all labels. `f32::MAX` if empty.
+    #[inline]
+    #[must_use]
+    pub fn best_cost(&self) -> f32 {
+        self.0.iter().fold(f32::MAX, |acc, l| acc.min(l.cost))
+    }
+
+    /// Best time: earliest for forward, latest for reverse. `None` if empty.
+    #[inline]
+    #[must_use]
+    pub fn best_time(&self, is_arrival: bool) -> Option<Time> {
+        if is_arrival {
+            self.0.iter().map(|l| l.time).max()
+        } else {
+            self.0.iter().map(|l| l.time).min()
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &ParetoLabel> {
+        self.0.iter()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TimeConstraint {
-    Arrival(Time),
-    Departure(Time),
+pub struct LiveTime {
+    pub scheduled: Time,
+    pub actual: Time,
 }
 
-impl TimeConstraint {
-    pub fn time(&self) -> Time {
-        match *self {
-            TimeConstraint::Arrival(time) => time,
-            TimeConstraint::Departure(time) => time,
-        }
+impl LiveTime {
+    #[must_use]
+    pub fn delay(&self) -> Delay {
+        (self.actual - self.scheduled).into()
     }
-}
 
-/// The execution engine for the Round-Based Public Transit Routing (RAPTOR) algorithm.
-///
-/// This struct holds the search parameters and a reference to the underlying transit
-/// [`Repository`]. It is designed to be short-lived, typically created via
-/// [`Repository::router`].
-///
-/// # Search Logic
-/// RAPTOR explores the network in "rounds." Round `K` finds all stops reachable
-/// with exactly `K` trips. This structure ensures that we only explore the
-/// necessary graph edges based on the `departure` time and `walk_distance` constraints.
-pub struct Raptor<'a> {
-    repository: &'a Repository,
-    from: Location,
-    to: Location,
-    time_constraint: TimeConstraint,
-    allow_walks: bool,
-    // walk_distance: Distance,
-}
-
-impl<'a> Raptor<'a> {
-    /// Creates a new RAPTOR search instance for a specific origin and destination.
-    ///
-    /// By default, the search uses the current system time for departure and
-    /// a standard walking distance. These can be customized using the builder
-    /// methods before calling solve.
-    ///
-    /// # Arguments
-    /// * `repository` - A reference to the static transit data.
-    /// * `from` - The starting location (Stop, Area, or Coordinate).
-    /// * `to` - The target destination.
-    pub fn new(repository: &'a Repository, from: Location, to: Location) -> Self {
+    #[must_use]
+    pub const fn scheduled_only(time: Time) -> Self {
         Self {
-            repository,
-            from,
-            to,
-            time_constraint: TimeConstraint::Departure(Time::now()),
-            allow_walks: true,
+            scheduled: time,
+            actual: time,
         }
     }
+}
 
-    /// Sets the earliest time the journey can begin.
-    ///
-    /// The algorithm will only consider trips that depart at or after this time.
-    /// Note that earlier departure times may result in different optimal paths
-    /// even for the same origin/destination.
-    pub fn departure_at(mut self, departure: Time) -> Self {
-        self.time_constraint = TimeConstraint::Departure(departure);
-        self
-    }
+#[derive(Debug, Clone, Copy)]
+pub enum Parent {
+    Transit {
+        boarding_p: SequnceIdx,
+        alighting_p: SequnceIdx,
+        trip: TripIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
+    },
 
-    /// Sets the latest time the journey can arrive.
-    ///
-    /// The algorithm will only consider trips that arrive at or before this time.
-    /// Note that latest arrival times may result in different optimal paths
-    /// even for the same origin/destination.
-    pub fn arrival_at(mut self, arrival: Time) -> Self {
-        self.time_constraint = TimeConstraint::Arrival(arrival);
-        self
-    }
+    Transfer {
+        from_stop: StopIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
+    },
+    Walk {
+        from_stop: StopIdx,
+        departure_time: LiveTime,
+        arrival_time: LiveTime,
+    },
+    Origin,
+}
 
-    pub fn with_time_constraint(mut self, constrait: TimeConstraint) -> Self {
-        self.time_constraint = constrait;
-        self
-    }
+pub struct Update {
+    pub stop: StopIdx,
+    pub time: Time,
+    pub cost: f32,
 
-    /// If the raptor algorithm is allowed to walk to stops, this can/will improve travel time in most cases.
-    pub fn allow_walks(mut self, value: bool) -> Self {
-        self.allow_walks = value;
-        self
-    }
+    pub parent: Parent,
+}
 
-    /// Wrapper around slove_with_allocator but creates the allocator internally.
-    ///
-    /// Executes the multi-criteria search and returns the optimal itinerary.
-    ///
-    /// This is the most computationally expensive part of the process, involving
-    /// parallelized route scanning and transfer calculations.
-    ///
-    /// # Returns
-    /// * `Ok(Itinerary)` - The best path found based on arrival time.
-    /// * `Err(Error)` - Returns an error if no path exists or if the search
-    ///   parameters are invalid.
-    ///
-    /// # Performance
-    /// This method leverages the parallel optimizations in the underlying [`Repository`].
-    /// Execution time typically scales with the number of possible routes between
-    /// the origin and destination.
-    pub fn solve(self) -> Result<Itinerary, self::Error> {
-        let mut allocator = Allocator::new(self.repository);
-        self.solve_with_allocator(&mut allocator)
-    }
-
-    /// Executes the multi-criteria search and returns the optimal itinerary.
-    ///
-    /// This is the most computationally expensive part of the process, involving
-    /// parallelized route scanning and transfer calculations.
-    ///
-    /// # Returns
-    /// * `Ok(Itinerary)` - The best path found based on arrival time.
-    /// * `Err(Error)` - Returns an error if no path exists or if the search
-    ///   parameters are invalid.
-    ///
-    /// # Performance
-    /// This method leverages the parallel optimizations in the underlying [`Repository`].
-    /// Execution time typically scales with the number of possible routes between
-    /// the origin and destination.
-    pub fn solve_with_allocator(self, allocator: &mut Allocator) -> Result<Itinerary, self::Error> {
-        let from_stops = stops_by_location(self.repository, &self.from)?;
-        let to_stops = stops_by_location(self.repository, &self.to)?;
-
-        match self.time_constraint {
-            TimeConstraint::Arrival(time) => {
-                to_stops.into_iter().for_each(|stop| {
-                    allocator.marked_stops.set(stop.index as usize, true);
-                    allocator.curr_labels[stop.index as usize] = Some(time);
-                });
-                allocator.target.stops = from_stops.into_iter().map(|stop| stop.index).collect();
-                allocator.target.tau_star = time::MIN;
-                allocator.active.fill(u32::MIN);
-            }
-            TimeConstraint::Departure(time) => {
-                from_stops.into_iter().for_each(|stop| {
-                    allocator.marked_stops.set(stop.index as usize, true);
-                    allocator.curr_labels[stop.index as usize] = Some(time);
-                });
-                allocator.target.stops = to_stops.into_iter().map(|stop| stop.index).collect();
-                allocator.target.tau_star = time::MAX;
-                allocator.active.fill(u32::MAX);
-            }
+impl Update {
+    #[must_use]
+    pub const fn new(stop: StopIdx, time: Time, cost: f32, parent: Parent) -> Self {
+        Self {
+            stop,
+            time,
+            cost,
+            parent,
         }
+    }
+}
 
-        allocator.round = 0;
-        loop {
-            if allocator.round >= MAX_ROUNDS {
-                warn!("Hit round limit!");
-                break;
-            }
-            allocator.swap_labels();
+pub fn solve(
+    query: RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialGrid,
+    state: &mut State,
+) -> Result<Itinerary, crate::Error> {
+    let is_arrival = matches!(query.time_direction, query::TimeDirection::Arrival(_));
 
-            // Pre process
+    let itinerary = solve_core(&query, consumer, spatial, state)?;
 
-            if allocator.marked_stops.not_any() {
-                break;
-            }
+    if is_arrival && let Some(first_leg) = itinerary.legs.first() {
+        let optimal_departure = first_leg.departure_time.scheduled;
 
-            let mut marked_stops = mem::take(&mut allocator.marked_stops);
-            trace!(
-                "Found {} in round {}",
-                marked_stops.iter_ones().count(),
-                allocator.round
-            );
+        let forward_query = RaptorQuery {
+            origin: query.origin,
+            destination: query.destination,
+            time_direction: query::TimeDirection::Departure(optimal_departure),
+            search_radius: query.search_radius,
+            date: query.date,
+            transit_penalty: query.transit_penalty,
+            transfer_penalty: query.transfer_penalty,
+            walk_penalty: query.walk_penalty,
+        };
 
-            // allocator.active.fill(u32::MAX);
-            allocator.active_mask.fill(false);
-            marked_stops.iter_ones().for_each(|stop_idx| {
-                // We look at all the routes that serve a stop
-                // for each route that serve a route we store the earliest stop in that route
-                // that we serve
-                // Example: This is a the stops in a route
-                // we have marked 1 3 6 as improvments
-                // so we want to make sure that we only exlopre this route once and from the earliest stop
-                // in this case it will be 1
-                // 0 1 2 3 4 5 6 7 8
-                //   ^   ^     ^
-                routes_serving_stop(self.repository, stop_idx as u32, allocator);
-                for route in allocator.routes_serving_stops.iter() {
-                    let r_idx = route.route_idx as usize;
-                    let p_idx = route.idx_in_route;
-                    match self.time_constraint {
-                        TimeConstraint::Departure(_) => {
-                            // Forward: Default active to u32::MAX, Keep MIN
-                            let p_idx_to_beat = allocator
-                                .active_mask
-                                .get(r_idx)
-                                .map(|_| allocator.active[r_idx])
-                                .unwrap_or(u32::MAX);
+        state.reset();
+        return solve_core(&forward_query, consumer, spatial, state);
+    }
 
-                            if p_idx < p_idx_to_beat {
-                                allocator.active[r_idx] = p_idx;
-                                allocator.active_mask.set(r_idx, true);
-                            }
-                        }
-                        TimeConstraint::Arrival(_) => {
-                            // Reverse: Default active to 0, Keep MAX
-                            let p_idx_to_beat = allocator
-                                .active_mask
-                                .get(r_idx)
-                                .map(|_| allocator.active[r_idx])
-                                .unwrap_or(0);
+    Ok(itinerary)
+}
 
-                            if p_idx > p_idx_to_beat {
-                                allocator.active[r_idx] = p_idx;
-                                allocator.active_mask.set(r_idx, true);
-                            }
-                        }
+#[allow(clippy::cast_possible_truncation)]
+fn solve_core(
+    query: &RaptorQuery,
+    consumer: &Consumer,
+    spatial: &SpatialGrid,
+    state: &mut State,
+) -> Result<Itinerary, crate::Error> {
+    match query.time_direction {
+        query::TimeDirection::Arrival(time) => {
+            let init_label = ParetoLabel::new(time, 0.0);
+            match &query.destination {
+                QueryLocation::Stop(stop) => {
+                    state.marked_stops[stop.as_usize()] = true;
+                    state.current_labels[stop.as_usize()].add(init_label, true);
+                    state.tau_star[stop.as_usize()].add(init_label, true);
+                    let parent_idx = state.calc_parent_idx(0, *stop);
+                    state.parents[parent_idx] = Some(Parent::Origin);
+                }
+                QueryLocation::Stops(stops) => {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()].add(init_label, true);
+                        state.tau_star[stop.as_usize()].add(init_label, true);
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
                     }
                 }
-            });
-
-            marked_stops.fill(false);
-            allocator.marked_stops = mem::take(&mut marked_stops);
-
-            match self.time_constraint {
-                TimeConstraint::Arrival(_) => {
-                    explore_routes_reverse(self.repository, allocator);
-                    allocator.run_updates_reverse();
-
-                    explore_transfers_reverse(self.allow_walks, self.repository, allocator);
-                    allocator.run_updates_reverse();
-                }
-                TimeConstraint::Departure(_) => {
-                    explore_routes(self.repository, allocator);
-                    allocator.run_updates();
-
-                    explore_transfers(self.allow_walks, self.repository, allocator);
-                    allocator.run_updates();
-                }
+                QueryLocation::Coordinate(coordinate) => spatial
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
+                    .for_each(|(stop, to_coordinate)| {
+                        let time_to_walk = time_to_walk(*coordinate, to_coordinate);
+                        let arr_time = Time(time.0 - time_to_walk.0);
+                        let walk_cost = f64::from(time_to_walk.0) * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost as f32);
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()].add(label, true);
+                        state.tau_star[stop.as_usize()].add(label, true);
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
+                    }),
             }
 
-            allocator
-                .target
-                .stops
-                .iter()
-                .filter_map(|stop_idx| {
-                    let tau_star = allocator.tau_star[*stop_idx as usize];
-                    tau_star.map(|tau_star| (stop_idx, tau_star))
-                })
-                .for_each(|(stop_idx, tau_star)| {
-                    let improvement = match self.time_constraint {
-                        TimeConstraint::Arrival(_) => tau_star > allocator.target.tau_star,
-                        TimeConstraint::Departure(_) => tau_star < allocator.target.tau_star,
-                    };
-                    if improvement {
-                        allocator.target.tau_star = tau_star;
-                        allocator.target.best_stop = Some(*stop_idx);
-                        allocator.target.best_round = Some(allocator.round);
+            match &query.origin {
+                QueryLocation::Stop(stop) => {
+                    state.target_stops.push((*stop, Duration(0)));
+                }
+                QueryLocation::Stops(stops) => {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
+                        state.target_stops.push((stop, Duration(0)));
                     }
-                });
-            allocator.next_round();
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
+                    .filter(|stop_idx| consumer.iter_trips_by_stop(*stop_idx).count() != 0)
+                    .filter_map(|stop_idx| {
+                        consumer
+                            .stop(stop_idx)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop_idx, c))
+                    })
+                    .for_each(|(stop_idx, to_coordinate)| {
+                        let walk_time = time_to_walk(*coordinate, to_coordinate);
+                        state.target_stops.push((stop_idx, walk_time));
+                    }),
+            }
+        }
+        query::TimeDirection::Departure(time) => {
+            let init_label = ParetoLabel::new(time, 0.0);
+            match &query.origin {
+                QueryLocation::Stop(stop) => {
+                    state.marked_stops[stop.as_usize()] = true;
+                    state.current_labels[stop.as_usize()].add(init_label, false);
+                    state.tau_star[stop.as_usize()].add(init_label, false);
+
+                    let parent_idx = state.calc_parent_idx(0, *stop);
+                    state.parents[parent_idx] = Some(Parent::Origin);
+                }
+                QueryLocation::Stops(stops) => {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()].add(init_label, false);
+                        state.tau_star[stop.as_usize()].add(init_label, false);
+
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
+                    .for_each(|(stop, to_coordinate)| {
+                        let time_to_walk = time_to_walk(*coordinate, to_coordinate);
+                        let arr_time = Time(time.0 + time_to_walk.0);
+                        let walk_cost = f64::from(time_to_walk.0) * query.walk_penalty;
+                        let label = ParetoLabel::new(arr_time, walk_cost as f32);
+                        state.marked_stops[stop.as_usize()] = true;
+                        state.current_labels[stop.as_usize()].add(label, false);
+                        state.tau_star[stop.as_usize()].add(label, false);
+
+                        let parent_idx = state.calc_parent_idx(0, stop);
+                        state.parents[parent_idx] = Some(Parent::Origin);
+                    }),
+            }
+
+            match &query.destination {
+                QueryLocation::Stop(stop) => {
+                    state.target_stops.push((*stop, Duration(0)));
+                }
+                QueryLocation::Stops(stops) => {
+                    for stop in stops
+                        .iter()
+                        .filter(|&&stop| consumer.iter_trips_by_stop(stop).count() != 0)
+                        .copied()
+                    {
+                        state.target_stops.push((stop, Duration(0)));
+                    }
+                }
+                QueryLocation::Coordinate(coordinate) => spatial
+                    .iter_stops_in_radius(*coordinate, query.search_radius)
+                    .filter(|stop| consumer.iter_trips_by_stop(*stop).count() != 0)
+                    .filter_map(|stop| {
+                        consumer
+                            .stop(stop)
+                            .coordinate
+                            .as_option()
+                            .map(|c| (stop, c))
+                    })
+                    .for_each(|(stop, to_coordinate)| {
+                        let walk_time = time_to_walk(*coordinate, to_coordinate);
+                        state.target_stops.push((stop, walk_time));
+                    }),
+            }
+        }
+    }
+
+    let is_arrival = matches!(query.time_direction, query::TimeDirection::Arrival(_));
+
+    let updates = match query.time_direction {
+        query::TimeDirection::Arrival(_) => {
+            explore_transfers_reverse(query, consumer, spatial, state)
+        }
+        query::TimeDirection::Departure(_) => explore_transfers(query, consumer, spatial, state),
+    };
+
+    state.apply_updates(0, is_arrival, &updates);
+
+    // Evaluate whether any target stop is already reachable (round 0 walk).
+    for (target_stop, duration) in state.target_stops.iter() {
+        for label in state.current_labels[target_stop.as_usize()].iter() {
+            let true_time = if is_arrival {
+                Time(label.time.0 - duration.0)
+            } else {
+                Time(label.time.0 + duration.0)
+            };
+            let true_cost =
+                f64::from(duration.0).mul_add(query.walk_penalty, f64::from(label.cost));
+            let new_label = ParetoLabel::new(true_time, true_cost as f32);
+            if state.target_tau_star.add(new_label, is_arrival)
+                && true_cost as f32 <= state.target_tau_star.best_cost()
+            {
+                state.target_best_stop = Opt::new(*target_stop);
+                state.target_best_round = Some(0);
+            }
+        }
+    }
+
+    for round in 1..MAX_ROUNDS {
+        if !state.marked_stops.iter().any(|&marked| marked) {
+            break;
         }
 
-        if let Some(target_stop) = allocator.target.best_stop
-            && let Some(target_round) = allocator.target.best_round
+        mem::swap(&mut state.current_labels, &mut state.previous_labels);
+        state.current_labels.iter_mut().for_each(ParetoFront::clear);
+
+        state
+            .active_trip_patterns
+            .fill(Opt::new(SequnceIdx(u32::MAX)));
+        for marked_stop in state
+            .marked_stops
+            .iter()
+            .enumerate()
+            .filter(|(_, marked)| **marked)
+            .map(|(i, _)| StopIdx(i as u32))
         {
-            let path = backtrack(
-                self.repository,
-                allocator,
-                target_stop,
-                target_round,
-                self.time_constraint,
-            )?;
-            Ok(Itinerary::new(self.from, self.to, path, self.repository))
-        } else {
-            Err(self::Error::NoRouteFound)
+            for trip_pattern in consumer.iter_trip_patterns_by_stop(marked_stop) {
+                if let Some(p_idx) = consumer
+                    .iter_stop_sequence_by_trip_pattern(trip_pattern.idx)
+                    .position(|stop| stop.idx.0 == marked_stop.0)
+                {
+                    let p_idx = SequnceIdx(p_idx as u32);
+                    let active_p_idx = state.active_trip_patterns[trip_pattern.idx.as_usize()];
+                    match query.time_direction {
+                        query::TimeDirection::Arrival(_) => {
+                            if let Some(active_p_idx) = active_p_idx.as_option()
+                                && p_idx > active_p_idx
+                            {
+                                state.active_trip_patterns[trip_pattern.idx.as_usize()] =
+                                    Opt::new(p_idx);
+                            } else if active_p_idx.is_none() {
+                                state.active_trip_patterns[trip_pattern.idx.as_usize()] =
+                                    Opt::new(p_idx);
+                            }
+                        }
+                        query::TimeDirection::Departure(_) => {
+                            if let Some(active_p_idx) = active_p_idx.as_option()
+                                && p_idx < active_p_idx
+                            {
+                                state.active_trip_patterns[trip_pattern.idx.as_usize()] =
+                                    Opt::new(p_idx);
+                            } else if active_p_idx.is_none() {
+                                state.active_trip_patterns[trip_pattern.idx.as_usize()] =
+                                    Opt::new(p_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        state.marked_stops.fill(false);
+
+        match query.time_direction {
+            query::TimeDirection::Arrival(_) => {
+                let updates = explore_trip_patterns_reverse(query, consumer, state);
+                state.apply_updates(round, is_arrival, &updates);
+
+                let updates = explore_transfers_reverse(query, consumer, spatial, state);
+                state.apply_updates(round, is_arrival, &updates);
+            }
+            query::TimeDirection::Departure(_) => {
+                let updates = explore_trip_patterns(query, consumer, state);
+                state.apply_updates(round, is_arrival, &updates);
+
+                let updates = explore_transfers(query, consumer, spatial, state);
+                state.apply_updates(round, is_arrival, &updates);
+            }
+        }
+
+        for (target_stop, duration) in state.target_stops.iter() {
+            for label in state.current_labels[target_stop.as_usize()].iter() {
+                let true_time = if is_arrival {
+                    Time(label.time.0 - duration.0)
+                } else {
+                    Time(label.time.0 + duration.0)
+                };
+                let true_cost = label.cost as f64 + duration.0 as f64 * query.walk_penalty;
+                let new_label = ParetoLabel::new(true_time, true_cost as f32);
+                if state.target_tau_star.add(new_label, is_arrival)
+                    && true_cost as f32 <= state.target_tau_star.best_cost()
+                {
+                    state.target_best_stop = Opt::new(*target_stop);
+                    state.target_best_round = Some(round);
+                }
+            }
         }
     }
+
+    Itinerary::new(query, state, consumer)
+}
+
+#[must_use]
+pub fn time_to_walk(coordinate_a: Coordinate, coordinate_b: Coordinate) -> Duration {
+    const R: f64 = 6371.0;
+    let dist_lat = f64::to_radians(coordinate_a.lat_f64() - coordinate_b.lat_f64());
+    let dist_lon = f64::to_radians(coordinate_a.lon_f64() - coordinate_b.lon_f64());
+    let a = (f64::cos(f64::to_radians(coordinate_b.lat_f64()))
+        * f64::cos(f64::to_radians(coordinate_a.lat_f64()))
+        * f64::sin(dist_lon / 2.0))
+    .mul_add(
+        f64::sin(dist_lon / 2.0),
+        f64::powi(f64::sin(dist_lat / 2.0), 2),
+    );
+    let c = 2.0 * f64::atan2(f64::sqrt(a), f64::sqrt(1.0 - a));
+    let euclidean_distance = R * c * 1000.0;
+
+    let network_distance = euclidean_distance * 1.3;
+
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
+    let duration = (network_distance / 1.2).ceil() as u32;
+    Duration(duration)
 }
